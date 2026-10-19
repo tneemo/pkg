@@ -4,7 +4,7 @@ import { parse as parseToml } from "smol-toml";
 
 /** All installable dependency sources. Unsupported installer inputs fail closed. */
 export function effectiveDependencies(bundle: Bundle): { npm: Record<string, string[]>; pip: Record<string, string[]> } {
-  const out = { npm: {} as Record<string, string[]>, pip: {} as Record<string, string[]> };
+  const out = { npm: Object.create(null) as Record<string, string[]>, pip: Object.create(null) as Record<string, string[]> };
   const add = (eco: "npm" | "pip", name: string, range: unknown) => {
     if (!validDependency(eco, name, range)) throw new Error(`invalid ${eco} dependency ${name}: ${String(range)}`);
     const key = eco === "pip" ? name.replace(/\[.*$/, "").toLowerCase().replace(/[-_.]+/g, "-") : name;

@@ -373,7 +373,7 @@ async function checkUpstream(env: Env, bundle: Bundle): Promise<Finding[]> {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { versions?: Record<string, unknown>; releases?: Record<string, { yanked?: boolean }[]> };
       const versions = eco === "npm" ? Object.keys(data.versions ?? {}) : Object.entries(data.releases ?? {}).filter(([, files]) => files.some((f) => !f.yanked)).map(([v]) => v);
-      if (!ranges.every((r) => versions.some((v) => eco === "npm" ? semver.satisfies(v, r) : pipSatisfies(v, r === "*" ? "" : r)))) throw new Error(`no released version matches ${ranges.join(" and ")}`);
+      if (!versions.some((v) => ranges.every((r) => eco === "npm" ? semver.satisfies(v, r) : pipSatisfies(v, r === "*" ? "" : r)))) throw new Error(`no released version matches ${ranges.join(" and ")}`);
     } catch (e) { findings.push({ level: "error", code: "unverified-dependency", message: `${eco} ${name}: ${(e as Error).message}; retry when upstream verification is available` }); }
   }
   for (const [dep, range] of Object.entries(bundle.manifest.builds ?? {})) {

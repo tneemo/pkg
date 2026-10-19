@@ -173,7 +173,7 @@ export function unsafePathReason(path: string): string | null {
   if (/[\x00-\x1f\x7f:<>"|?*]/.test(path)) return "control characters or Windows path aliases are not allowed";
   const parts = path.split("/");
   if (parts.some((p) => p === "" || p === "." || p === "..")) return "path segments '.', '..' and empty segments are not allowed";
-  if (parts.some((p) => /[. ]$/.test(p) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(p) || p.includes("~"))) return "Windows aliases and reserved names are not allowed";
+  if (parts.some((p) => /[. ]$/.test(p) || /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?:[ .]|$)/i.test(p) || p.includes("~"))) return "Windows aliases and reserved names are not allowed";
   if (parts.some((p) => p.toLowerCase() === ".git")) return ".git directories are not allowed";
   if (parts.some((p) => p.toLowerCase() === "node_modules")) return "node_modules is not allowed";
   return null;

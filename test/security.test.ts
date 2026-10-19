@@ -29,7 +29,7 @@ test("F01: decoded configuration receives all text and filename checks", () => {
 });
 
 test("F02/F03: Windows aliases and real junctions cannot cross the project boundary", () => {
-  for (const p of [".GIT/config", "x/.Git/hooks/x", "NODE_MODULES/x", "a./x", "a /x", "con.txt", "COM1", "x:y", "git~1/config", "x\u0001/y"]) assert.ok(unsafePathReason(p), p);
+  for (const p of [".GIT/config", "x/.Git/hooks/x", "NODE_MODULES/x", "a./x", "a /x", "con.txt", "COM1", "CONOUT$", "NUL .txt", "x:y", "git~1/config", "x\u0001/y"]) assert.ok(unsafePathReason(p), p);
   const dir = scratch(); const outside = scratch();
   try {
     symlinkSync(outside, join(dir, "linked"), process.platform === "win32" ? "junction" : "dir");
@@ -93,6 +93,10 @@ test("F06: file-only dependencies, invalid versions and unavailable upstream che
       await assert.rejects(api.publish(env, req()), (e) => e.status === 422 && e.details.findings.some((f) => f.code === "unverified-dependency"));
       assert.ok(checked);
     }
+    globalThis.fetch = async () => Response.json({ versions: { "1.0.0": {}, "999.0.0": {} } });
+    const conflicting = bundle([{ path: "package.json", content: '{"dependencies":{"demo":"^999"}}' }], { dependencies: { npm: { demo: "^1" } } });
+    const request = new Request("http://localhost/api/publish", { method: "POST", headers: { "x-pkg-owner": "audit", authorization: "Bearer synthetic" }, body: gzipSync(JSON.stringify(conflicting)) });
+    await assert.rejects(api.publish(env, request), (e) => e.status === 422 && e.details.findings.some((f) => f.code === "unverified-dependency"));
   } finally { globalThis.fetch = originalFetch; db.close(); }
 });
 
