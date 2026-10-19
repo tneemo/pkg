@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pkg": {
+      "command": "node",
+      "args": ["../../cli/dist/pkg.js", "mcp"],
+      "env": { "PKG_REGISTRY": "http://127.0.0.1:8787" }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@tneemo/pkg",
+  "version": "0.1.0",
+  "description": "Find, install and publish reusable software builds. The CLI and MCP server for pkg.tneemo.com.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "pkg": "dist/pkg.js", "tpkg": "dist/pkg.js" },
+  "files": ["dist", "skill"],
+  "engines": { "node": ">=20" },
+  "homepage": "https://pkg.tneemo.com",
+  "repository": { "type": "git", "url": "git+https://github.com/tneemo/pkg.git", "directory": "cli" },
+  "keywords": ["mcp", "coding-agent", "registry", "templates", "scaffold", "claude-code", "cursor"],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "esbuild": "^0.28.0",
+    "zod": "^4.0.0"
+  }
+}

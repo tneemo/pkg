@@ -1,0 +1,14 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "sqlite-db",
+  "version": "1.0.0",
+  "kind": "module",
+  "description": "Zero-dependency SQLite for Node.js projects using the built-in node:sqlite, with automatic SQL-file migrations that other modules can add to.",
+  "license": "MIT",
+  "keywords": ["database", "db", "sqlite", "sql", "migrations", "persistence", "storage"],
+  "stack": {
+    "requires": { "node": ">=22.13", "typescript": "*" },
+    "provides": ["db", "sqlite"]
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "fastapi-api-key",
+  "version": "1.0.0",
+  "kind": "module",
+  "description": "API key authentication for FastAPI: a require_api_key dependency that checks the X-API-Key header against keys from the environment, in constant time.",
+  "license": "MIT",
+  "keywords": ["auth", "authentication", "api-key", "apikey", "security", "fastapi", "dependency", "header"],
+  "stack": {
+    "requires": { "fastapi": ">=0.100", "python": "*" },
+    "provides": ["auth", "api-key"]
+  },
+  "env": {
+    "API_KEYS": { "description": "Comma-separated list of accepted API keys", "example": "dev-key-change-me", "required": true }
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

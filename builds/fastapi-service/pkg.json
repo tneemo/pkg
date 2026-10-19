@@ -1,0 +1,13 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "fastapi-service",
+  "version": "1.0.0",
+  "kind": "foundation",
+  "description": "Python REST API starter with FastAPI: typed settings from env, JSON error handling, health check, router layout and pytest.",
+  "license": "MIT",
+  "keywords": ["api", "rest", "http", "server", "backend", "starter", "python", "fastapi", "service"],
+  "stack": {
+    "provides": ["python", "fastapi", "pydantic", "pytest", "api", "rest-api"]
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

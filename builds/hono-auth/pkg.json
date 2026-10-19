@@ -1,0 +1,20 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "hono-auth",
+  "version": "1.0.0",
+  "kind": "module",
+  "description": "Email and password accounts for Hono APIs: register, login, JWT bearer tokens, requireAuth middleware, scrypt password hashing.",
+  "license": "MIT",
+  "keywords": ["auth", "authentication", "login", "signup", "register", "users", "accounts", "jwt", "password", "session"],
+  "stack": {
+    "requires": { "hono": ">=4.10", "typescript": "*" },
+    "provides": ["auth", "users", "jwt"]
+  },
+  "builds": { "tneemo/sqlite-db": "^1.0.0" },
+  "dependencies": { "npm": { "zod": ">=3.23.0" } },
+  "env": {
+    "JWT_SECRET": { "description": "Secret used to sign login tokens. Required in production.", "example": "replace-with-a-long-random-string", "required": true },
+    "JWT_TTL_SECONDS": { "description": "Token lifetime in seconds (default 7 days)", "example": "604800" }
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

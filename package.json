@@ -1,0 +1,26 @@
+{
+  "name": "pkg-monorepo",
+  "private": true,
+  "description": "pkg — an open, agent-first marketplace for reusable software builds (pkg.tneemo.com)",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "cli",
+    "registry"
+  ],
+  "scripts": {
+    "build": "npm run build -w cli",
+    "dev": "npm run dev -w registry",
+    "seed": "node scripts/seed.mjs",
+    "test": "node --test \"test/*.test.*\"",
+    "typecheck": "tsc -p cli --noEmit && tsc -p registry --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/semver": "^7.7.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "semver": "^7.7.0"
+  }
+}

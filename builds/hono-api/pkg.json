@@ -1,0 +1,13 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "hono-api",
+  "version": "1.0.0",
+  "kind": "foundation",
+  "description": "TypeScript REST API starter for Node with Hono: validated env, JSON errors, security headers, health check and vitest.",
+  "license": "MIT",
+  "keywords": ["api", "rest", "http", "server", "backend", "starter", "node", "typescript"],
+  "stack": {
+    "provides": ["node", "typescript", "hono", "zod", "vitest", "api", "rest-api"]
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://pkg.tneemo.com/schema/pkg.json",
+  "name": "hono-rate-limit",
+  "version": "1.0.0",
+  "kind": "module",
+  "description": "In-memory rate limiting middleware for Hono with standard RateLimit and Retry-After headers. Per IP by default, or any key you choose.",
+  "license": "MIT",
+  "keywords": ["rate-limit", "ratelimit", "throttle", "throttling", "middleware", "abuse", "brute-force", "security"],
+  "stack": {
+    "requires": { "hono": ">=4", "typescript": "*" },
+    "provides": ["rate-limit"]
+  },
+  "repository": "https://github.com/tneemo/pkg"
+}

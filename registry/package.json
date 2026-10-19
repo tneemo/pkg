@@ -1,0 +1,17 @@
+{
+  "name": "pkg-registry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply pkg --local && wrangler dev",
+    "deploy": "wrangler d1 migrations apply pkg --remote && wrangler deploy"
+  },
+  "dependencies": {
+    "marked": "^18.1.0",
+    "semver": "^7.7.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "wrangler": "^4.151.0"
+  }
+}
