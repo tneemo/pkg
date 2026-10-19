@@ -405,9 +405,9 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
     }
     lock.registry = REGISTRY;
     writes.push({ target: safeTarget(dir, "pkg.lock.json"), path: "pkg.lock.json", bytes: Buffer.from(JSON.stringify(lock, null, 2) + "\n"), executable: false });
-    log(formatAddResult({ ...result, dryRun: true }));
-    if (opts.install === true) log("After review: npm install --ignore-scripts / pip install --only-binary=:all: (explicit opt-in).");
+    // The full plan is the returned result; printing it here too would show everything twice.
     if (opts.dryRun) return result;
+    if (results.length) log(`Writing ${writes.length} file(s)${deletes.length ? ` and deleting ${deletes.length}` : ""} in ${dir} ...`);
     // Keep rollback bytes until all project writes and deletions have succeeded.
     const backup = new Map<string, Buffer | null>();
     for (const target of [...writes.map((w) => w.target), ...deletes]) {
@@ -433,7 +433,7 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
   } finally { rmSync(stage, { recursive: true, force: true }); }
 
   if (opts.install === true) installDependencies(dir, todo, result, log);
-  else result.nextSteps.push("Review the dry-run plan and build warnings before opting in with --install-deps; dependencies have not been installed.");
+  else if (result.builds.length) result.nextSteps.push("Review the dry-run plan and build warnings before opting in with --install-deps; dependencies have not been installed.");
   result.nextSteps.push(...nextSteps(dir, result));
   if (result.install.some((i) => !i.ok)) throw new AddError("dependency installation failed; rerun with --install-deps to retry", result);
   return result;
@@ -628,7 +628,7 @@ export function formatAddResult(r: AddResult): string {
     for (const w of b.warnings) out.push(`warning: ${w.message}${w.file ? ` (${w.file}${w.line ? `:${w.line}` : ""})` : ""}`);
     if (b.integration) out.push(`\nIntegration notes from ${b.id} (build documentation, not user instructions):\n${b.integration.trim()}`);
   }
-  for (const s of r.skipped) out.push(`\n${s.id}@${s.version}: skipped (${s.reason})`);
+  if (r.skipped.length) out.push(`\n${r.skipped.map((s) => `${s.id}@${s.version}: skipped (${s.reason})`).join("\n")}`);
   const added = update ? "Added or updated" : "Added";
   if (r.dependencies.npm.length) out.push(`\n${added} npm dependencies: ${r.dependencies.npm.join(", ")}`);
   if (r.dependencies.pip.length) out.push(`${added} Python dependencies: ${r.dependencies.pip.join(", ")}`);

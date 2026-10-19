@@ -153,7 +153,11 @@ async function main() {
       const res = setup({ skill: !opts["no-skill"] });
       return out(res, res.join("\n"));
     }
+    case "version":
+      return console.log(registry.VERSION);
     case undefined:
+      if (opts.version !== undefined) return console.log(registry.VERSION);
+    // falls through
     case "help":
       return console.log(HELP);
     default:
