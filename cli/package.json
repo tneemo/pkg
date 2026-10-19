@@ -6,12 +6,15 @@
   "type": "module",
   "bin": { "pkg": "dist/pkg.js", "tpkg": "dist/pkg.js" },
   "files": ["dist", "skill"],
+  "mcpName": "io.github.tneemo/pkg",
   "engines": { "node": ">=20" },
   "homepage": "https://pkg.tneemo.com",
   "repository": { "type": "git", "url": "git+https://github.com/tneemo/pkg.git", "directory": "cli" },
   "keywords": ["mcp", "coding-agent", "registry", "templates", "scaffold", "claude-code", "cursor"],
+  "publishConfig": { "access": "public" },
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "prepack": "node build.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.0",

@@ -3,7 +3,8 @@ import { gunzipSync } from "node:zlib";
 import type { Finding } from "../../shared/checks.ts";
 import { integrityOf, type Bundle, type Manifest } from "../../shared/manifest.ts";
 
-export const VERSION = "0.1.0";
+declare const __PKG_VERSION__: string; // set from package.json by build.mjs
+export const VERSION = __PKG_VERSION__;
 export const REGISTRY = (process.env.PKG_REGISTRY ?? "https://pkg.tneemo.com").replace(/\/+$/, "");
 
 /** Which agent or tool is driving pkg, sent along with feedback. */

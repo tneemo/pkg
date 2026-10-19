@@ -4,6 +4,7 @@ dist/
 .dev.vars
 *.log
 cli/skill/
+cli/LICENSE
 # Agent demo: keep only the MCP config; whatever the agent builds stays local.
 examples/agent-demo/*
 !examples/agent-demo/.mcp.json
