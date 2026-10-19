@@ -11,7 +11,7 @@ const bundle = (files: Bundle["files"], extra: Partial<Bundle> = {}): Bundle => 
 test("validateManifest accepts a minimal manifest and explains problems", () => {
   assert.deepEqual(validateManifest(manifest), []);
   const errors = validateManifest({ ...manifest, name: "Bad Name", version: "one", kind: "app", stack: { requires: { hono: "not a range" } } });
-  assert.equal(errors.length, 4);
+  for (const field of ["name", "version", "kind", "stack.requires"]) assert.ok(errors.some((e) => e.includes(field)), field);
 });
 
 test("parseSpec handles owner/name and ranges", () => {

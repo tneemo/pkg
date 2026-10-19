@@ -1,9 +1,11 @@
 // Registry logic: search, resolve, publish, download and feedback. Storage is
 // D1 (metadata + FTS5 search) and R2 (immutable gzipped bundles).
 import semver from "semver";
+import { satisfies as pipSatisfies } from "@renovatebot/pep440";
+import { effectiveDependencies } from "../../shared/dependencies.ts";
 import { checkBundle, type CheckReport, type Finding } from "../../shared/checks.ts";
 import { checkCompat, describeCompat, parseStack, type CompatResult, type Profile } from "../../shared/compat.ts";
-import { integrityOf, OWNER_RE, parseSpec, type Bundle, type Manifest } from "../../shared/manifest.ts";
+import { integrityOf, OWNER_RE, parseSpec, validateBundle, type Bundle, type Manifest } from "../../shared/manifest.ts";
 
 export interface Env {
   DB: D1Database;
@@ -56,6 +58,7 @@ export interface VersionRow {
   publisher: string;
   published_at: string;
   yanked: number;
+  bundle_key?: string | null;
 }
 
 const STOPWORDS = new Set("a an and app application build builds create for from i in into it make me my need of on or project simple some that the this to use using want we with".split(" "));
@@ -68,9 +71,9 @@ export function successRate(b: Pick<BuildRow, "successes" | "failures">): number
 
 /** 0-1 trust signal from usage, agent-reported outcomes, quality and reports. */
 export function reputation(b: BuildRow): number {
-  const usage = Math.min(1, Math.log10(1 + b.downloads) / 3);
+  // Historical raw downloads are not evidence of independent successful installs.
   const penalty = b.reports >= 3 && b.reports > b.successes / 10 ? 0.5 : 1;
-  return (usage * 0.35 + successRate(b) * 0.35 + (b.quality / 100) * 0.3) * penalty;
+  return (successRate(b) * 0.5 + (b.quality / 100) * 0.5) * penalty;
 }
 
 export function publicBuild(b: BuildRow) {
@@ -96,7 +99,7 @@ export function publicBuild(b: BuildRow) {
 
 /** Which builds provide each tag, e.g. {"hono": ["tneemo/hono-api"]}. */
 async function providers(env: Env): Promise<Map<string, { id: string; kind: string }[]>> {
-  const { results } = await env.DB.prepare("SELECT id, kind, provides FROM builds WHERE provides != '[]' ORDER BY downloads DESC").all<Pick<BuildRow, "id" | "kind" | "provides">>();
+  const { results } = await env.DB.prepare("SELECT id, kind, provides FROM builds WHERE provides != '[]' ORDER BY quality DESC").all<Pick<BuildRow, "id" | "kind" | "provides">>();
   const map = new Map<string, { id: string; kind: string }[]>();
   for (const row of results) for (const tag of JSON.parse(row.provides) as string[]) {
     if (!map.has(tag)) map.set(tag, []);
@@ -127,7 +130,7 @@ export async function search(env: Env, params: SearchParams) {
     const stmt = kind ? env.DB.prepare(sql).bind(match, kind) : env.DB.prepare(sql).bind(match);
     rows = (await stmt.all<BuildRow & { rank: number }>()).results;
   } else {
-    const sql = `SELECT * FROM builds ${kind ? "WHERE kind = ?1" : ""} ORDER BY downloads DESC, updated_at DESC LIMIT 200`;
+    const sql = `SELECT * FROM builds ${kind ? "WHERE kind = ?1" : ""} ORDER BY quality DESC, updated_at DESC LIMIT 200`;
     rows = (await (kind ? env.DB.prepare(sql).bind(kind) : env.DB.prepare(sql)).all<BuildRow>()).results;
   }
 
@@ -189,7 +192,7 @@ export async function buildInfo(env: Env, id: string, version?: string | null) {
   if (!build) throw new HttpError(404, `build "${id}" not found`);
   const versions = await getVersions(env, id);
   const v = await getVersion(env, id, version || build.latest);
-  if (!v) throw new HttpError(404, `version "${version}" of "${id}" not found`);
+  if (!v || v.yanked) throw new HttpError(404, `version "${version}" of "${id}" not found`);
   const manifest = JSON.parse(v.manifest) as Manifest;
   return {
     ...publicBuild(build),
@@ -214,43 +217,44 @@ export async function buildInfo(env: Env, id: string, version?: string | null) {
  */
 export async function resolve(env: Env, specs: string[]) {
   if (!Array.isArray(specs) || specs.length === 0 || specs.length > 50) throw new HttpError(400, "send {\"builds\": [\"owner/name@range\", ...]} with 1-50 entries");
-  const constraints = new Map<string, Set<string>>();
-  const requestedBy = new Map<string, Set<string>>();
-  const chosen = new Map<string, VersionRow>();
-  const queue: { id: string; range: string; from: string }[] = [];
-
-  for (const s of specs) {
-    const p = parseSpec(String(s));
-    if (!p) throw new HttpError(400, `invalid build spec "${s}"; expected owner/name or owner/name@range`);
-    queue.push({ id: p.id, range: p.range, from: "(requested)" });
-  }
-
+  const roots = specs.map((s) => {
+    const p = typeof s === "string" ? parseSpec(s) : null;
+    if (!p) throw new HttpError(400, `invalid build spec "${s}"`);
+    return { id: p.id, range: p.range, from: "(requested)" };
+  });
   const versionCache = new Map<string, VersionRow[]>();
   let steps = 0;
-  while (queue.length) {
-    if (++steps > 500) throw new HttpError(422, "dependency graph too large");
-    const { id, range, from } = queue.shift()!;
-    if (!constraints.has(id)) constraints.set(id, new Set());
-    if (!requestedBy.has(id)) requestedBy.set(id, new Set());
-    requestedBy.get(id)!.add(from);
-    const ranges = constraints.get(id)!;
-    if (ranges.has(range) && chosen.has(id)) continue;
-    ranges.add(range);
-
-    if (!versionCache.has(id)) {
-      const { results } = await env.DB.prepare("SELECT * FROM versions WHERE build_id = ? AND yanked = 0").bind(id).all<VersionRow>();
-      if (!results.length) throw new HttpError(404, `build "${id}" not found`, { requestedBy: [...requestedBy.get(id)!] });
-      versionCache.set(id, results);
+  let failure = "unsatisfiable build dependency graph";
+  // Each candidate owns its pending edges. Backtracking discards its requirements too.
+  const solve = async (pending: typeof roots, selected: Map<string, VersionRow>): Promise<Map<string, VersionRow> | null> => {
+    if (++steps > 5000 || selected.size > 200) throw new HttpError(422, "dependency graph too large");
+    if (!pending.length) return selected;
+    const [edge, ...rest] = pending;
+    const current = selected.get(edge.id);
+    if (current) {
+      if (!semver.satisfies(current.version, edge.range)) { failure = `conflicting constraints for ${edge.id} (needs ${edge.range}, selected ${current.version})`; return null; }
+      return solve(rest, selected);
     }
-    const candidates = versionCache.get(id)!.map((v) => v.version).filter((v) => [...ranges].every((r) => semver.satisfies(v, r)));
-    const best = semver.rsort(candidates)[0];
-    if (!best) throw new HttpError(409, `no version of "${id}" satisfies ${[...ranges].join(" and ")}`, { requestedBy: [...requestedBy.get(id)!] });
-    if (chosen.get(id)?.version === best) continue;
-    const row = versionCache.get(id)!.find((v) => v.version === best)!;
-    chosen.set(id, row);
-    const manifest = JSON.parse(row.manifest) as Manifest;
-    for (const [dep, depRange] of Object.entries(manifest.builds ?? {})) queue.push({ id: dep.toLowerCase(), range: depRange, from: id });
-  }
+    if (!versionCache.has(edge.id)) {
+      const { results } = await env.DB.prepare("SELECT * FROM versions WHERE build_id = ? AND yanked = 0").bind(edge.id).all<VersionRow>();
+      versionCache.set(edge.id, results.sort((a, b) => semver.rcompare(a.version, b.version)));
+    }
+    for (const row of versionCache.get(edge.id)!) {
+      if (!semver.satisfies(row.version, edge.range)) continue;
+      const manifest = JSON.parse(row.manifest) as Manifest;
+      const next = new Map(selected).set(edge.id, row);
+      const deps = Object.entries(manifest.builds ?? {}).map(([id, range]) => ({ id: id.toLowerCase(), range, from: edge.id }));
+      const result = await solve([...rest, ...deps], next);
+      if (result) return result;
+    }
+    failure = `no compatible version of ${edge.id} for ${edge.range}: ${failure}`;
+    return null;
+  };
+  const chosen = await solve(roots, new Map());
+  if (!chosen) throw new HttpError(409, failure);
+  const requestedBy = new Map<string, Set<string>>([...chosen.keys()].map((id) => [id, new Set()]));
+  for (const r of roots) requestedBy.get(r.id)!.add(r.from);
+  for (const [id, row] of chosen) for (const dep of Object.keys((JSON.parse(row.manifest) as Manifest).builds ?? {})) requestedBy.get(dep.toLowerCase())!.add(id);
 
   // Topological order: dependencies first, foundations before modules.
   const order: string[] = [];
@@ -291,25 +295,31 @@ function kindRank(v: VersionRow): number {
   return (JSON.parse(v.manifest) as Manifest).kind === "foundation" ? 0 : 1;
 }
 
-/** Streams a stored bundle and counts the download. */
-export async function downloadBundle(env: Env, ctx: ExecutionContext, owner: string, name: string, version: string): Promise<Response> {
-  const obj = await env.BUNDLES.get(`bundles/${owner}/${name}/${version}.json.gz`);
-  if (!obj) throw new HttpError(404, "bundle not found");
-  ctx.waitUntil(env.DB.prepare("UPDATE builds SET downloads = downloads + 1 WHERE id = ?").bind(`${owner}/${name}`).run());
-  return new Response(obj.body, {
-    headers: {
-      "content-type": "application/gzip",
-      "cache-control": "public, max-age=31536000, immutable",
-      "x-pkg-integrity": obj.customMetadata?.integrity ?? "",
-    },
-  });
+/** Integrity is authoritative in D1; old releases retain their legacy key. */
+async function storedBytes(env: Env, id: string, version: string): Promise<{ bytes: Uint8Array; integrity: string } | null> {
+  const row = await getVersion(env, id, version);
+  if (!row || row.yanked) return null;
+  const obj = await env.BUNDLES.get(row.bundle_key || `bundles/${id}/${version}.json.gz`);
+  if (!obj) return null;
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  if (await integrityOf(bytes) !== row.integrity) throw new HttpError(502, "stored bundle integrity mismatch");
+  return { bytes, integrity: row.integrity };
 }
 
-/** Reads and parses a published bundle (used by the shadcn-compatible endpoint and file viewer). */
+/** Raw downloads are not installs and do not change trust or ranking. */
+export async function downloadBundle(env: Env, _ctx: ExecutionContext, owner: string, name: string, version: string): Promise<Response> {
+  const stored = await storedBytes(env, `${owner}/${name}`, version);
+  if (!stored) throw new HttpError(404, "bundle not found");
+  return new Response(stored.bytes, { headers: {
+    "content-type": "application/gzip", "cache-control": "public, max-age=300",
+    "x-pkg-integrity": stored.integrity,
+  } });
+}
+
 export async function readBundle(env: Env, id: string, version: string): Promise<Bundle | null> {
-  const obj = await env.BUNDLES.get(`bundles/${id}/${version}.json.gz`);
-  if (!obj) return null;
-  return JSON.parse(await new Response(obj.body.pipeThrough(new DecompressionStream("gzip"))).text());
+  const stored = await storedBytes(env, id, version);
+  if (!stored) return null;
+  return JSON.parse(await gunzipLimited(stored.bytes.buffer as ArrayBuffer, 6_000_000));
 }
 
 // ---------------------------------------------------------------- publishing
@@ -351,31 +361,24 @@ async function authorize(env: Env, token: string | null, owner: string): Promise
   throw new HttpError(403, `GitHub user "${login}" cannot publish as "${owner}"; use your own login or an organization you belong to (token needs read:org)`);
 }
 
-/** Dependencies must exist upstream, otherwise installs are open to dependency-confusion attacks. */
-async function checkUpstream(env: Env, m: Manifest): Promise<Finding[]> {
+/** Check every supported install source, with bounded requests and visible failures. */
+async function checkUpstream(env: Env, bundle: Bundle): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const npm = new Set<string>();
-  const pip = new Set<string>();
-  for (const deps of [m.dependencies, m.devDependencies]) {
-    Object.keys(deps?.npm ?? {}).forEach((n) => npm.add(n));
-    Object.keys(deps?.pip ?? {}).forEach((n) => pip.add(n));
+  const effective = effectiveDependencies(bundle);
+  // Sequential requests avoid an unbounded fan-out and stay within runtime connection limits.
+  for (const eco of ["npm", "pip"] as const) for (const [name, ranges] of Object.entries(effective[eco])) {
+    const url = eco === "npm" ? `https://registry.npmjs.org/${encodeURIComponent(name)}` : `https://pypi.org/pypi/${encodeURIComponent(name)}/json`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { versions?: Record<string, unknown>; releases?: Record<string, { yanked?: boolean }[]> };
+      const versions = eco === "npm" ? Object.keys(data.versions ?? {}) : Object.entries(data.releases ?? {}).filter(([, files]) => files.some((f) => !f.yanked)).map(([v]) => v);
+      if (!versions.some((v) => ranges.every((r) => eco === "npm" ? semver.satisfies(v, r) : pipSatisfies(v, r === "*" ? "" : r)))) throw new Error(`no released version matches ${ranges.join(" and ")}`);
+    } catch (e) { findings.push({ level: "error", code: "unverified-dependency", message: `${eco} ${name}: ${(e as Error).message}; retry when upstream verification is available` }); }
   }
-  const checks: Promise<void>[] = [];
-  for (const name of [...npm].slice(0, 40)) {
-    checks.push(fetch(`https://registry.npmjs.org/${name.replace("/", "%2f")}`, { headers: { accept: "application/vnd.npm.install-v1+json" } }).then((r) => {
-      if (r.status === 404) findings.push({ level: "error", code: "unknown-dependency", message: `npm package "${name}" does not exist` });
-    }).catch(() => {}));
-  }
-  for (const name of [...pip].slice(0, 40)) {
-    checks.push(fetch(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`).then((r) => {
-      if (r.status === 404) findings.push({ level: "error", code: "unknown-dependency", message: `PyPI package "${name}" does not exist` });
-    }).catch(() => {}));
-  }
-  await Promise.all(checks);
-  for (const [dep, range] of Object.entries(m.builds ?? {})) {
+  for (const [dep, range] of Object.entries(bundle.manifest.builds ?? {})) {
     const { results } = await env.DB.prepare("SELECT version FROM versions WHERE build_id = ? AND yanked = 0").bind(dep.toLowerCase()).all<{ version: string }>();
-    if (!results.length) findings.push({ level: "error", code: "unknown-build", message: `build dependency "${dep}" is not published` });
-    else if (!results.some((r) => semver.satisfies(r.version, range))) findings.push({ level: "error", code: "unknown-build", message: `no published version of "${dep}" satisfies ${range}` });
+    if (!results.some((r) => semver.satisfies(r.version, range))) findings.push({ level: "error", code: "unknown-build", message: `no published version of ${dep} satisfies ${range}` });
   }
   return findings;
 }
@@ -386,7 +389,18 @@ export async function publish(env: Env, request: Request) {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? null;
   const publisher = await authorize(env, token, owner);
 
-  const body = await request.arrayBuffer();
+  const reader = request.body?.getReader();
+  if (!reader) throw new HttpError(400, "missing upload");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_UPLOAD) { await reader.cancel(); throw new HttpError(413, "upload larger than 5 MB"); }
+    chunks.push(value);
+  }
+  const body = await new Blob(chunks).arrayBuffer();
   if (body.byteLength > MAX_UPLOAD) throw new HttpError(413, "upload larger than 5 MB");
   let raw: Bundle;
   try {
@@ -397,22 +411,12 @@ export async function publish(env: Env, request: Request) {
   }
   if (raw?.format !== 1 || !Array.isArray(raw.files)) throw new HttpError(400, "unsupported bundle format");
 
-  // Canonicalize: keep only known fields so what we store is exactly what we checked.
-  const bundle: Bundle = {
-    format: 1,
-    manifest: raw.manifest,
-    readme: typeof raw.readme === "string" ? raw.readme : undefined,
-    integration: typeof raw.integration === "string" ? raw.integration : undefined,
-    files: raw.files.map((f) => ({
-      path: String(f.path),
-      content: String(f.content),
-      ...(f.encoding === "base64" ? { encoding: "base64" as const } : {}),
-      ...(f.executable ? { executable: true } : {}),
-    })),
-  };
+  const errors = validateBundle(raw);
+  if (errors.length) throw new HttpError(422, "invalid bundle", { errors });
+  const bundle: Bundle = raw;
 
   const report: CheckReport = checkBundle(bundle);
-  if (report.risk !== "error") report.findings.push(...(await checkUpstream(env, bundle.manifest)));
+  if (report.risk !== "error") report.findings.push(...(await checkUpstream(env, bundle)));
   if (report.findings.some((f) => f.level === "error")) report.risk = "error";
   if (report.risk === "error") throw new HttpError(422, "build failed automated checks", report);
 
@@ -422,7 +426,8 @@ export async function publish(env: Env, request: Request) {
 
   const bytes = await gzip(JSON.stringify(bundle));
   const integrity = await integrityOf(bytes);
-  await env.BUNDLES.put(`bundles/${id}/${m.version}.json.gz`, bytes, { customMetadata: { integrity }, httpMetadata: { contentType: "application/gzip" } });
+  const bundleKey = `objects/${integrity.slice(7).replace(/[^a-zA-Z0-9]/g, (c) => c === "+" ? "-" : c === "/" ? "_" : "")}.json.gz`;
+  await env.BUNDLES.put(bundleKey, bytes, { customMetadata: { integrity }, httpMetadata: { contentType: "application/gzip" } });
 
   const now = new Date().toISOString();
   const files = bundle.files.map((f) => ({ path: f.path, size: f.encoding === "base64" ? Math.floor((f.content.length * 3) / 4) : new TextEncoder().encode(f.content).length }));
@@ -443,11 +448,16 @@ export async function publish(env: Env, request: Request) {
       .bind(id, `${owner} ${m.name}`, m.description, [...(m.keywords ?? []), ...(m.stack?.provides ?? []), ...Object.keys(m.stack?.requires ?? {})].join(" "), bundle.readme ?? ""));
   }
   stmts.push(
-    env.DB.prepare(`INSERT INTO versions (build_id, version, manifest, readme, integration, files, integrity, size, risk, quality, findings, publisher, published_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, m.version, JSON.stringify(m), bundle.readme ?? null, bundle.integration ?? null,
-      JSON.stringify(files), integrity, bytes.length, report.risk, report.quality, JSON.stringify(report.findings), publisher, now),
+    env.DB.prepare(`INSERT INTO versions (build_id, version, manifest, readme, integration, files, integrity, size, risk, quality, findings, publisher, published_at, bundle_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, m.version, JSON.stringify(m), bundle.readme ?? null, bundle.integration ?? null,
+      JSON.stringify(files), integrity, bytes.length, report.risk, report.quality, JSON.stringify(report.findings), publisher, now, bundleKey),
   );
-  await env.DB.batch(stmts);
+  try { await env.DB.batch(stmts); }
+  catch (e) {
+    // The losing upload can leave an unreferenced content-addressed object, never corrupt a version.
+    if (await getVersion(env, id, m.version)) throw new HttpError(409, `${id}@${m.version} already exists`);
+    throw e;
+  }
   return { id, version: m.version, integrity, risk: report.risk, quality: report.quality, findings: report.findings, publisher };
 }
 

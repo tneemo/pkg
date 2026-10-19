@@ -29,3 +29,25 @@ jobs:
       - run: npm test
         env:
           PKG_REGISTRY: http://127.0.0.1:8787
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node scripts/assemble-examples.mjs
+        env:
+          PKG_REGISTRY: http://127.0.0.1:8787
+      - name: Verify release tarball, both executables, setup and MCP
+        run: node scripts/release-smoke.mjs --pack
+
+  windows-security:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: node --experimental-transform-types --test test/shared.test.ts test/security.test.ts test/distribution.test.mjs
+      - run: node scripts/release-smoke.mjs --pack

@@ -129,16 +129,16 @@ background:linear-gradient(180deg,color-mix(in oklab,var(--c),#fff 20%),var(--c)
 .icon.xs{--s:30px;border-radius:7px}.icon.xs svg{stroke-width:2.2}
 .icon.lg{--s:120px}.icon.lg svg{stroke-width:1.7}
 .icon.agent{background:linear-gradient(140deg,#ff4f76,#b04cf0)}
-.seg{display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;padding:2px;border-radius:9px;background:var(--fill);max-width:100%}
-.seg>*{position:relative;font:500 .875rem/1.2 var(--sans);letter-spacing:-.01em;color:var(--label);background:none;border:0;border-radius:7px;padding:6px 16px;cursor:pointer;white-space:nowrap;text-align:center;transition:background-color .2s,box-shadow .2s}
+.seg{display:inline-grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);padding:2px;border-radius:9px;background:var(--fill);max-width:100%}
+.seg>*{position:relative;min-width:0;font:500 .875rem/1.2 var(--sans);letter-spacing:-.01em;color:var(--label);background:none;border:0;border-radius:7px;padding:6px 16px;cursor:pointer;white-space:normal;overflow-wrap:anywhere;text-align:center;transition:background-color .2s,box-shadow .2s}
 .seg [aria-selected="true"],.seg label:has(:checked){background:var(--seg-on);box-shadow:0 3px 8px rgba(0,0,0,.12),0 3px 1px rgba(0,0,0,.04);font-weight:600}
 .seg label:has(:focus-visible){outline:3px solid color-mix(in srgb,var(--tint) 60%,transparent)}
 .seg input{position:absolute;opacity:0;pointer-events:none}
 .hero .seg{margin:30px 0 12px}
 .tabpanel[hidden]{display:none}
 .tabpanel .fn{margin:9px 16px 0}
-.cmd{position:relative;background:var(--cell);border-radius:12px}
-.cmd pre{margin:0;padding:14px 84px 14px 16px;white-space:pre-wrap;overflow-wrap:break-word;font-size:.875rem;line-height:1.65}
+.cmd{position:relative;background:var(--cell);border-radius:12px;min-width:0;max-width:100%}
+.cmd pre{margin:0;padding:14px 84px 14px 16px;white-space:pre;overflow-x:auto;max-width:100%;font-size:.875rem;line-height:1.65}
 .cmd code{font-size:inherit}
 .cmd .c{color:var(--label-2)}
 .pill{font:600 .8125rem/1 var(--sans);letter-spacing:-.005em;border:0;border-radius:999px;background:var(--fill);color:var(--tint);padding:7px 13px;cursor:pointer}
@@ -158,7 +158,7 @@ background:linear-gradient(180deg,color-mix(in oklab,var(--c),#fff 20%),var(--c)
 .row:has(.stretch:hover){background:var(--fill)}
 .row .chev{width:15px;height:15px;color:var(--label-2);opacity:.6}
 .row .tick{width:18px;height:18px;color:var(--tint)}
-.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,450px);gap:56px;align-items:start}
+.hero>*{min-width:0}.split>*{min-width:0}.copyblock{min-width:0;max-width:100%}.copyblock pre{min-width:0;max-width:100%;overflow-x:auto}.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,450px);gap:56px;align-items:start}
 .convo{margin:6px 0 0;overflow-x:clip}
 .bubble{position:relative;width:fit-content;max-width:84%;margin:0 8px 0 auto;padding:9px 15px;border-radius:20px;background:var(--imsg);color:#fff;line-height:1.35}
 .bubble::before{content:"";position:absolute;right:-7px;bottom:0;width:20px;height:20px;background:var(--imsg);border-bottom-left-radius:16px 14px}
@@ -243,7 +243,7 @@ background:linear-gradient(180deg,color-mix(in oklab,var(--c),#fff 20%),var(--c)
 footer{border-top:1px solid var(--sep);padding:24px 0 40px;font-size:.8125rem;color:var(--label-2)}
 footer .wrap{display:flex;gap:10px 24px;flex-wrap:wrap;justify-content:space-between}
 footer nav{display:flex;gap:18px;flex-wrap:wrap}
-@media (max-width:900px){.hero,.split{grid-template-columns:minmax(0,1fr);gap:40px}.apps{grid-template-columns:1fr}.searchbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.searchbar .field-wrap{grid-column:1/-1}}
+@media (max-width:900px){.hero,.split{grid-template-columns:minmax(0,1fr);gap:40px}.apps{grid-template-columns:minmax(0,1fr)}.searchbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.searchbar .field-wrap{grid-column:1/-1}}
 @media (max-width:700px){
  .wrap{padding:0 16px}main{padding:24px 0 48px}
  .bar .wrap{gap:14px;height:52px}.links{display:none}
@@ -255,9 +255,9 @@ footer nav{display:flex;gap:18px;flex-wrap:wrap}
  body{padding-bottom:calc(58px + env(safe-area-inset-bottom))}
  .seg{display:grid;width:100%}.seg>*{padding-inline:6px;font-size:.8125rem}
  .sec{margin-top:56px}
- .steps{grid-template-columns:1fr;gap:22px}
+ .steps{grid-template-columns:minmax(0,1fr);gap:22px}
  .files .row{grid-template-columns:29px minmax(0,1fr)}.files .v{grid-column:2;text-align:left;margin:-6px 0 0}
- .searchbar{grid-template-columns:1fr}
+ .searchbar{grid-template-columns:minmax(0,1fr)}
  .product{gap:16px}.icon.lg{--s:88px}
  .actions{margin-top:12px}
  .sheet{padding:18px 16px}
@@ -268,7 +268,9 @@ footer nav{display:flex;gap:18px;flex-wrap:wrap}
 
 const SCRIPT = `
 document.querySelectorAll('[role=tablist]').forEach(list=>{const tabs=[...list.querySelectorAll('[role=tab]')];
-tabs.forEach(t=>t.addEventListener('click',()=>{tabs.forEach(x=>{x.setAttribute('aria-selected',x===t);document.getElementById(x.getAttribute('aria-controls')).hidden=x!==t})}))});
+const activate=t=>tabs.forEach(x=>{const on=x===t;x.setAttribute('aria-selected',String(on));x.tabIndex=on?0:-1;document.getElementById(x.getAttribute('aria-controls')).hidden=!on});
+activate(tabs.find(t=>t.getAttribute('aria-selected')==='true')??tabs[0]);
+tabs.forEach((t,i)=>{t.addEventListener('click',()=>activate(t));t.addEventListener('keydown',e=>{let j;if(e.key==='ArrowRight')j=(i+1)%tabs.length;else if(e.key==='ArrowLeft')j=(i+tabs.length-1)%tabs.length;else if(e.key==='Home')j=0;else if(e.key==='End')j=tabs.length-1;else return;e.preventDefault();activate(tabs[j]);tabs[j].focus()})})});
 document.querySelectorAll('.copy,[data-copy]').forEach(b=>b.addEventListener('click',async()=>{const label=b.dataset.label??=b.textContent;
 const t=b.dataset.copy??b.parentElement.querySelector('code').innerText.replace(/^#.*$/gm,'').trim();
 try{await navigator.clipboard.writeText(t);b.textContent='Copied';b.dataset.done='';clearTimeout(b.t);b.t=setTimeout(()=>{b.textContent=label;delete b.dataset.done},1600)}catch{b.textContent='Select and copy'}}));
@@ -320,7 +322,7 @@ function appRows(results: Result[], showCompat: boolean) {
     return `<article class="app">${buildIcon(r)}<div class="body"><div class="txt">
 <h3><a href="/${esc(r.id)}">${esc(name)}</a></h3>
 <p class="sub">${esc(r.description)}</p>
-<p class="meta"><span class="kind ${esc(r.kind)}">${r.kind === "foundation" ? "Foundation" : "Module"}</span><span>${esc(owner)}</span>${r.risk === "ok" ? `<span class="mi ok">${svg("check")}Checks passed</span>` : `<span class="mi warn">${svg("warn")}Warnings</span>`}${reports ? `<span>${Math.round((r.agent_reports.success / reports) * 100)}% worked for agents</span>` : ""}<span>${plural(r.downloads, "install")}</span></p>${fit}
+<p class="meta"><span class="kind ${esc(r.kind)}">${r.kind === "foundation" ? "Foundation" : "Module"}</span><span>${esc(owner)}</span>${r.risk === "ok" ? `<span class="mi ok">${svg("check")}Checks passed</span>` : `<span class="mi warn">${svg("warn")}Warnings</span>`}${reports ? `<span>${Math.round((r.agent_reports.success / reports) * 100)}% worked for agents</span>` : ""}<span>${plural(r.downloads, "historical download")}</span></p>${fit}
 </div>${getButton(r.id, r.kind)}</div></article>`;
   }).join("")}</div>`;
 }
@@ -383,7 +385,7 @@ export function homePage(origin: string, catalog: Results) {
 <ol class="steps">
   <li><div><h3>You describe the idea</h3><p>In your normal conversation with the agent: what you're building and, if you care, the stack. No spec files to prepare.</p></div></li>
   <li><div><h3>The agent searches pkg</h3><p>It looks for each part it needs and gets builds ranked by fit with your stack, automated checks and how they worked for other agents.</p></div></li>
-  <li><div><h3>pkg assembles the project</h3><p>Files, dependencies, scripts and env vars are installed in dependency order. Code inside a build never runs during install.</p></div></li>
+  <li><div><h3>pkg assembles the project</h3><p>Files, dependencies, scripts and env vars are installed in dependency order. Package managers are skipped by default. Review the plan and warnings before opting in to dependency installation.</p></div></li>
   <li><div><h3>The agent builds the rest</h3><p>It follows each build's integration notes, writes what's missing, then reports whether the builds worked. That report is the reputation.</p></div></li>
 </ol>
 </section>
@@ -456,7 +458,7 @@ export function buildPage(origin: string, info: Info, notes: Record<string, unkn
 <div class="strip">
   ${stat("Worked for agents", reports ? `${Math.round((info.agent_reports.success / reports) * 100)}%` : "–", reports ? `${info.agent_reports.success} of ${plural(reports, "report")}` : "No reports yet")}
   ${stat("Checks", info.checks.risk === "ok" ? "Passed" : plural(findings.length, "warning"), `Quality ${info.checks.quality}/100`, info.checks.risk === "ok" ? "ok" : "warn")}
-  ${stat("Installs", info.downloads.toLocaleString("en-US"), "All versions")}
+  ${stat("Historical downloads", info.downloads.toLocaleString("en-US"), "Legacy raw count; not unique installs")}
   ${stat("Kind", info.kind === "foundation" ? "Foundation" : "Module", info.kind === "foundation" ? "Starts a project" : "Adds to a project")}
   ${stat("Version", esc(info.version), day(info.published_at))}
   ${stat("License", esc(m.license))}
@@ -550,13 +552,13 @@ The full schema is at [${origin}/schema/pkg.json](${origin}/schema/pkg.json).
 
 ## Automated checks
 
-Every publish is checked on the registry. **Errors** reject the publish: unsafe paths, secrets or private keys, \`.env\` files, invalid manifests, and dependencies that don't exist on npm or PyPI (to block dependency confusion). **Warnings** are shown to everyone who installs: npm install scripts, code that pipes downloads into a shell or evaluates decoded data, hard-coded IP addresses, minified code, text that tries to steer AI agents, and files that change agent or editor configuration (\`.claude/\`, \`.mcp.json\`, \`.vscode/tasks.json\`, CI workflows).
+Every publish is checked on the registry. **Errors** reject the publish: unsafe paths, secrets or private keys, \`.env\` files, invalid manifests, and dependencies that don't exist on npm or PyPI (existence and version checks do not establish package trust). **Warnings** are shown to everyone who installs: npm install scripts, code that pipes downloads into a shell or evaluates decoded data, hard-coded IP addresses, minified code, text that tries to steer AI agents, and files that change agent or editor configuration (\`.claude/\`, \`.mcp.json\`, \`.vscode/tasks.json\`, CI workflows).
 
 A quality score rewards a README, integration notes, declared stack, tests, keywords and a repository link.
 
 ## Reputation
 
-There are no stars or accounts. After integrating a build, agents report whether it worked (\`pkg feedback owner/name --worked\` or \`--failed "reason"\`). Search ranks builds by relevance, fit with the project's stack, these reports, installs and quality. Anyone can flag a harmful build with \`pkg feedback owner/name --report "reason"\`.
+There are no stars or accounts. After integrating a build, agents report whether it worked (\`pkg feedback owner/name --worked\` or \`--failed "reason"\`). Search ranks builds by relevance, fit with the project's stack, these reports and quality. Historical raw downloads are not unique installs and carry no ranking weight. Anyone can flag a harmful build with \`pkg feedback owner/name --report "reason"\`.
 
 ## Versions
 

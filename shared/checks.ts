@@ -1,6 +1,7 @@
 // Automated security and quality checks. The registry runs them on every publish
 // (errors reject the publish); the CLI runs the same code locally as a preview.
-import { LIMITS, METADATA_FILES, unsafePathReason, validateManifest, type Bundle } from "./manifest.ts";
+import { decodedText, LIMITS, METADATA_FILES, unsafePathReason, validateBundle, type Bundle } from "./manifest.ts";
+import { effectiveDependencies } from "./dependencies.ts";
 
 export type Level = "error" | "warn" | "info";
 
@@ -77,10 +78,9 @@ function lineOf(text: string, index: number): number {
 export function checkBundle(bundle: Bundle): CheckReport {
   const findings: Finding[] = [];
   const add = (f: Finding) => findings.push(f);
-  const m = bundle.manifest;
-
-  for (const e of validateManifest(m)) add({ level: "error", code: "manifest", message: e });
+  for (const e of validateBundle(bundle)) add({ level: "error", code: "manifest", message: e });
   if (findings.length) return { risk: "error", quality: 0, findings };
+  const m = bundle.manifest;
 
   const isFoundation = m.kind === "foundation";
   if (bundle.files.length === 0 && !Object.keys(m.builds ?? {}).length) add({ level: "error", code: "empty", message: "the build has no files to install" });
@@ -94,26 +94,36 @@ export function checkBundle(bundle: Bundle): CheckReport {
     if (bad) { add({ level: "error", code: "path", file: path, message: `unsafe path: ${bad}` }); continue; }
     if (seen.has(path.toLowerCase())) add({ level: "error", code: "duplicate", file: path, message: "duplicate path (paths are case-insensitive on some systems)" });
     seen.add(path.toLowerCase());
-    if (METADATA_FILES.includes(path) && path !== "README.md") add({ level: "error", code: "metadata-file", file: path, message: "metadata files are not installable" });
+    if (METADATA_FILES.some((p) => p.toLowerCase() === path.toLowerCase()) && path.toLowerCase() !== "readme.md") add({ level: "error", code: "metadata-file", file: path, message: "metadata files are not installable" });
 
     const size = file.encoding === "base64" ? Math.floor((file.content.length * 3) / 4) : new TextEncoder().encode(file.content).length;
     total += size;
     if (size > LIMITS.maxFileBytes) add({ level: "error", code: "file-too-large", file: path, message: `files must be under ${LIMITS.maxFileBytes / 1e6} MB` });
-    if (/(?:^|\/)\.env(?:\.(?!example$|sample$|template$)[^/]*)?$/.test(path)) add({ level: "error", code: "env-file", file: path, message: "do not ship .env files; declare variables in pkg.json \"env\" instead" });
+    if (/(?:^|\/)\.env(?:\.(?!example$|sample$|template$)[^/]*)?$/i.test(path)) add({ level: "error", code: "env-file", file: path, message: "do not ship .env files; declare variables in pkg.json \"env\" instead" });
 
-    if (file.encoding === "base64") {
+    const text = decodedText(file);
+    if (file.encoding === "base64" && text === null) {
       add({ level: BINARY_EXEC.test(path) ? "warn" : "info", code: "binary", file: path, message: BINARY_EXEC.test(path) ? "ships an executable or compiled binary" : "binary file" });
-      continue;
     }
 
-    if (AGENT_FILES.some((re) => re.test(path))) add({ level: isFoundation ? "info" : "warn", code: "agent-instructions", file: path, message: "writes instructions that coding agents will follow" });
-    for (const [re, why] of AUTORUN_FILES) if (re.test(path)) add({ level: "warn", code: "autorun", file: path, message: why });
+    if (AGENT_FILES.some((re) => re.test(path.toLowerCase()))) add({ level: isFoundation ? "info" : "warn", code: "agent-instructions", file: path, message: "writes instructions that coding agents will follow" });
+    for (const [re, why] of AUTORUN_FILES) if (re.test(path.toLowerCase())) add({ level: "warn", code: "autorun", file: path, message: why });
     if (BINARY_EXEC.test(path)) add({ level: "warn", code: "script", file: path, message: "ships a platform script or executable" });
 
-    scanText(path, file.content, add);
-    if (path === "package.json" || path.endsWith("/package.json")) {
+    if (text === null) {
+      if (/\.(?:json|toml|txt|md|[cm]?[jt]sx?|py|ya?ml)$/i.test(path) || path.split("/").some((p) => p.startsWith("."))) add({ level: "error", code: "encoding", file: path, message: "configuration and text files must contain valid UTF-8 text" });
+      continue;
+    }
+    scanText(path, text, add);
+    if (path.toLowerCase() === "package.json" || path.toLowerCase().endsWith("/package.json")) {
       try {
-        const scripts = JSON.parse(file.content).scripts ?? {};
+        const pkg = JSON.parse(text);
+        if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) throw new Error("invalid package object");
+        for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "scripts"]) {
+          const v = pkg[field];
+          if (v !== undefined && (!v || typeof v !== "object" || Array.isArray(v) || Object.values(v).some((s) => typeof s !== "string"))) throw new Error(`invalid ${field}`);
+        }
+        const scripts = pkg.scripts ?? {};
         for (const hook of ["preinstall", "install", "postinstall", "prepare"]) {
           if (scripts[hook]) add({ level: "warn", code: "install-script", file: path, message: `"${hook}" script runs automatically during npm install: ${String(scripts[hook]).slice(0, 120)}` });
         }
@@ -132,6 +142,8 @@ export function checkBundle(bundle: Bundle): CheckReport {
     scanText(`pkg.json#scripts.${name}`, script, add);
   }
 
+  try { effectiveDependencies(bundle); }
+  catch (e) { add({ level: "error", code: "dependencies", message: (e as Error).message }); }
   // Quality score: documentation, declared compatibility, tests and metadata.
   const hasTests = bundle.files.some((f) => TEST_FILE.test(f.path));
   const quality =

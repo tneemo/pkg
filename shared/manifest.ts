@@ -1,5 +1,8 @@
 // The pkg.json manifest and the bundle format shared by the CLI and the registry.
 import semver from "semver";
+import { validRange as validPipRange } from "@renovatebot/pep440";
+import { manifestSchema } from "./schema.ts";
+import { validateShape } from "./schema-shape.ts";
 
 export type Kind = "module" | "foundation";
 export type Ecosystem = "npm" | "pip";
@@ -100,7 +103,7 @@ export function validateManifest(m: unknown): string[] {
   }
 
   if (x.stack !== undefined) {
-    if (typeof x.stack !== "object" || x.stack === null) errors.push('"stack" must be an object');
+    if (typeof x.stack !== "object" || x.stack === null || Array.isArray(x.stack)) errors.push('"stack" must be an object');
     else {
       const { requires, provides } = x.stack;
       if (requires !== undefined) {
@@ -119,17 +122,20 @@ export function validateManifest(m: unknown): string[] {
   for (const field of ["dependencies", "devDependencies"]) {
     const deps = x[field];
     if (deps === undefined) continue;
-    if (typeof deps !== "object" || deps === null) { errors.push(`"${field}" must be an object like {"npm": {"zod": "^3"}}`); continue; }
+    if (typeof deps !== "object" || deps === null || Array.isArray(deps)) { errors.push(`"${field}" must be an object like {"npm": {"zod": "^3"}}`); continue; }
     for (const [eco, map] of Object.entries(deps)) {
       if (eco !== "npm" && eco !== "pip") errors.push(`"${field}.${eco}": supported ecosystems are "npm" and "pip"`);
-      else if (typeof map !== "object" || map === null || Object.values(map).some((v) => typeof v !== "string")) errors.push(`"${field}.${eco}" must map package names to version ranges`);
+      else if (typeof map !== "object" || map === null || Array.isArray(map)) errors.push(`"${field}.${eco}" must map package names to version ranges`);
+      else for (const [name, range] of Object.entries(map)) {
+        if (!validDependency(eco, name, range)) errors.push(`"${field}.${eco}.${name}": invalid package name or version range (registry packages only)`);
+      }
     }
   }
 
   if (x.builds !== undefined) {
-    if (typeof x.builds !== "object" || x.builds === null) errors.push('"builds" must map "owner/name" to semver ranges');
+    if (typeof x.builds !== "object" || x.builds === null || Array.isArray(x.builds)) errors.push('"builds" must map "owner/name" to semver ranges');
     else for (const [id, range] of Object.entries(x.builds)) {
-      if (!parseSpec(`${id}@${range}`)) errors.push(`"builds": invalid entry "${id}": "${range}"`);
+      if (typeof range !== "string" || !/^[a-z0-9-]+\/[a-z0-9-]+$/.test(id) || !parseSpec(`${id}@${range}`)) errors.push(`"builds": invalid entry "${id}": "${range}"`);
     }
   }
 
@@ -137,16 +143,23 @@ export function validateManifest(m: unknown): string[] {
   if (x.files !== undefined && (!Array.isArray(x.files) || x.files.some((f: unknown) => typeof f !== "string"))) errors.push('"files" must be an array of glob strings');
 
   if (x.env !== undefined) {
-    if (typeof x.env !== "object" || x.env === null) errors.push('"env" must map variable names to {description, example, required}');
-    else for (const key of Object.keys(x.env)) if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) errors.push(`"env": invalid variable name "${key}"`);
+    if (typeof x.env !== "object" || x.env === null || Array.isArray(x.env)) errors.push('"env" must map variable names to {description, example, required}');
+    else for (const [key, value] of Object.entries(x.env)) {
+      if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) errors.push(`"env": invalid variable name "${key}"`);
+      const v = value as Record<string, unknown>;
+      if (!v || typeof v !== "object" || Array.isArray(v) ||
+        Object.keys(v).some((k) => !["description", "example", "required"].includes(k)) ||
+        ["description", "example"].some((k) => v[k] !== undefined && (typeof v[k] !== "string" || /[\r\n\0]/.test(v[k] as string))) ||
+        (v.required !== undefined && typeof v.required !== "boolean")) errors.push(`"env.${key}": invalid variable definition`);
+    }
   }
 
-  if (x.scripts !== undefined && (typeof x.scripts !== "object" || x.scripts === null || Object.values(x.scripts).some((v) => typeof v !== "string"))) errors.push('"scripts" must map script names to commands');
+  if (x.scripts !== undefined && (typeof x.scripts !== "object" || x.scripts === null || Array.isArray(x.scripts) || Object.entries(x.scripts).some(([k, v]) => !/^[a-zA-Z0-9:_-]+$/.test(k) || typeof v !== "string"))) errors.push('"scripts" must map script names to commands');
 
   for (const k of ["repository", "homepage"]) {
     if (x[k] !== undefined && (typeof x[k] !== "string" || !/^https:\/\//.test(x[k]))) errors.push(`"${k}" must be an https URL`);
   }
-  return errors;
+  return [...errors, ...validateShape(m, manifestSchema)];
 }
 
 /**
@@ -157,12 +170,46 @@ export function unsafePathReason(path: string): string | null {
   if (!path || path.length > 300) return "empty or too long";
   if (path.includes("\\")) return "backslashes are not allowed";
   if (path.startsWith("/") || /^[a-zA-Z]:/.test(path)) return "absolute paths are not allowed";
-  if (path.includes("\0")) return "NUL byte";
+  if (/[\x00-\x1f\x7f:<>"|?*]/.test(path)) return "control characters or Windows path aliases are not allowed";
   const parts = path.split("/");
   if (parts.some((p) => p === "" || p === "." || p === "..")) return "path segments '.', '..' and empty segments are not allowed";
-  if (parts[0] === ".git" || parts.includes(".git")) return ".git directories are not allowed";
-  if (parts.includes("node_modules")) return "node_modules is not allowed";
+  if (parts.some((p) => /[. ]$/.test(p) || /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?:[ .]|$)/i.test(p) || p.includes("~"))) return "Windows aliases and reserved names are not allowed";
+  if (parts.some((p) => p.toLowerCase() === ".git")) return ".git directories are not allowed";
+  if (parts.some((p) => p.toLowerCase() === "node_modules")) return "node_modules is not allowed";
   return null;
+}
+
+/** Deliberately limited registry-only subset: no URLs, options, local/VCS references or markers. */
+export function validDependency(eco: string, name: string, range: unknown): range is string {
+  if (typeof range !== "string" || range.length > 200 || /[\x00-\x1f\x7f]/.test(range)) return false;
+  if (eco === "npm") return /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) && name.length <= 214 && !!semver.validRange(range);
+  return /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*\])?$/.test(name) &&
+    (range === "*" || range === "" || (/^(?:~=|==|!=|<=|>=|<|>)[0-9][A-Za-z0-9.*+!_-]*(?:\s*,\s*(?:~=|==|!=|<=|>=|<|>)[0-9][A-Za-z0-9.*+!_-]*)*$/.test(range) && validPipRange(range)));
+}
+
+export function validateBundle(b: unknown): string[] {
+  if (!b || typeof b !== "object") return ["bundle must be an object"];
+  const x = b as Bundle;
+  const errors = validateManifest(x.manifest);
+  if (x.format !== 1 || !Array.isArray(x.files)) return [...errors, "unsupported bundle format"];
+  if ([x.readme, x.integration].some((s) => s !== undefined && typeof s !== "string")) errors.push("documentation must be text");
+  for (const f of x.files) {
+    if (!f || typeof f !== "object" || typeof f.path !== "string" || typeof f.content !== "string" ||
+      (f.encoding !== undefined && f.encoding !== "utf8" && f.encoding !== "base64") ||
+      (f.executable !== undefined && typeof f.executable !== "boolean")) { errors.push("invalid bundle file"); continue; }
+    if (f.encoding === "base64" && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(f.content)) errors.push(`invalid base64: ${f.path}`);
+  }
+  return errors;
+}
+
+/** Decode textual base64 before applying the same inspection and install policy. */
+export function decodedText(file: BundleFile): string | null {
+  if (file.encoding !== "base64") return file.content;
+  try {
+    const bytes = Uint8Array.from(atob(file.content), (c) => c.charCodeAt(0));
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+    return text.includes("\0") ? null : text;
+  } catch { return null; }
 }
 
 /** Normalizes a Python package name per PEP 503. */

@@ -1,6 +1,7 @@
 // Stack profiles and compatibility checks, shared by the CLI (real project on disk)
 // and the registry (search ranking against the stack an agent sends).
 import semver from "semver";
+import { parse as parseToml } from "smol-toml";
 import { normalizePip, type Manifest } from "./manifest.ts";
 
 /** A project's stack: tag -> known version (or null when the version is unknown). */
@@ -82,11 +83,11 @@ export function profileFromPythonDeps(lines: string[]): Profile {
 
 /** Extracts [project].dependencies from a pyproject.toml without a TOML parser. */
 export function pyprojectDependencies(toml: string): string[] {
-  const project = /^\[project\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml);
-  if (!project) return [];
-  const deps = /^dependencies\s*=\s*\[([\s\S]*?)\]/m.exec(project[1]);
-  if (!deps) return [];
-  return [...deps[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
+  if (!toml.trim()) return [];
+  const data = parseToml(toml) as Record<string, any>;
+  const deps = data.project?.dependencies ?? [];
+  if (!Array.isArray(deps) || deps.some((d) => typeof d !== "string")) throw new Error("project.dependencies must be an array of strings");
+  return deps;
 }
 
 export function mergeProfiles(...profiles: Profile[]): Profile {

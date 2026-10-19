@@ -7,6 +7,7 @@ import { parsePipRequirement, pyprojectDependencies } from "../../shared/compat.
 import { parseSpec, unsafePathReason } from "../../shared/manifest.ts";
 import { detectProject, readJson } from "./detect.ts";
 import { AddError, deleteFiles, fileHash, lockFacts } from "./install.ts";
+import { checkProjectPaths, safeTarget } from "./paths.ts";
 
 export interface RemoveOptions {
   dir: string;
@@ -37,6 +38,7 @@ export interface RemoveResult {
 
 export async function remove(specs: string[], opts: RemoveOptions): Promise<RemoveResult> {
   const dir = resolve(opts.dir);
+  checkProjectPaths(dir);
   const project = detectProject(dir);
   const lock = project.lock;
   if (!lock) throw new AddError(`no builds are installed in ${dir} (no pkg.lock.json)`);
@@ -56,18 +58,18 @@ export async function remove(specs: string[], opts: RemoveOptions): Promise<Remo
   }
 
   const root = dir.endsWith(sep) ? dir : dir + sep;
-  const sharedWith = new Map(staying.flatMap((id) => Object.keys(lock.builds[id].files).map((path) => [path, id] as const)));
+  const sharedWith = new Map(staying.flatMap((id) => Object.keys(lock.builds[id].files).map((path) => [path.toLowerCase(), id] as const)));
   const builds: RemovedBuild[] = [];
   const targets = new Set<string>();
   for (const id of removing) {
     const entry = lock.builds[id];
     const r: RemovedBuild = { id, version: entry.version, deleted: [], kept: [] };
     for (const [path, hash] of Object.entries(entry.files)) {
-      const target = resolve(dir, path);
+      const target = safeTarget(dir, path);
       if (unsafePathReason(path) || !target.startsWith(root)) { r.kept.push(`${path} (unsafe path in pkg.lock.json)`); continue; }
       const current = fileHash(target);
       if (current === null) continue;
-      if (sharedWith.has(path)) r.kept.push(`${path} (also in ${sharedWith.get(path)})`);
+      if (sharedWith.has(path.toLowerCase())) r.kept.push(`${path} (also in ${sharedWith.get(path.toLowerCase())})`);
       else if (current !== hash) r.kept.push(`${path} (edited)`);
       else { r.deleted.push(path); targets.add(target); }
     }
@@ -96,7 +98,7 @@ export async function remove(specs: string[], opts: RemoveOptions): Promise<Remo
   // Files first: if a delete fails, the lock entry is still there to retry with.
   deleteFiles(dir, [...targets]);
   for (const id of removing) delete lock.builds[id];
-  writeFileSync(join(dir, "pkg.lock.json"), JSON.stringify(lock, null, 2) + "\n");
+  writeFileSync(safeTarget(dir, "pkg.lock.json"), JSON.stringify(lock, null, 2) + "\n");
   return result;
 }
 

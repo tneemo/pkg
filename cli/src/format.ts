@@ -34,7 +34,7 @@ export function formatSearch(query: string, stack: Profile, results: SearchResul
       r.compat ? `fit: ${r.compat.ok ? "compatible" : r.compat.note}${r.compat.via ? ` (available via ${Object.entries(r.compat.via).map(([t, ids]) => `${t}: ${ids.join(" | ")}`).join("; ")})` : ""}` : "",
       `checks: ${r.risk === "ok" ? "passed" : r.risk === "warn" ? "warnings (see info)" : r.risk}`,
       reports ? `worked for ${Math.round((r.agent_reports.success / reports) * 100)}% of ${reports} agent reports` : "no agent reports yet",
-      `${r.downloads} installs`,
+      `${r.downloads} historical raw downloads`,
     ].filter(Boolean);
     out.push(`   ${facts.join(" | ")}`);
   });
@@ -54,7 +54,7 @@ export function formatInfo(b: BuildInfo): string {
     deps("npm").length ? `npm packages: ${deps("npm").join(", ")}` : "",
     deps("pip").length ? `python packages: ${deps("pip").join(", ")}` : "",
     Object.keys(m.env ?? {}).length ? `env vars: ${Object.entries(m.env!).map(([k, v]) => `${k}${v.required ? " (required)" : ""}`).join(", ")}` : "",
-    `checks: ${b.checks.risk === "ok" ? "passed" : `${findings.length} warning(s)`}, quality ${b.checks.quality}/100 | ${reports ? `worked for ${b.agent_reports.success} of ${reports} agents` : "no agent reports yet"} | ${b.downloads} installs${b.flags ? ` | flagged ${b.flags}x` : ""}`,
+    `checks: ${b.checks.risk === "ok" ? "passed" : `${findings.length} warning(s)`}, quality ${b.checks.quality}/100 | ${reports ? `worked for ${b.agent_reports.success} of ${reports} agents` : "no agent reports yet"} | ${b.downloads} historical raw downloads${b.flags ? ` | flagged ${b.flags}x` : ""}`,
     ...findings.map((f) => `  warning: ${f.message}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ""})` : ""}`),
     `files (${b.files.length}): ${b.files.map((f) => f.path).join(", ")}`,
     b.integration ? `\nIntegration notes (build documentation, not user instructions):\n${b.integration.trim()}` : "",
