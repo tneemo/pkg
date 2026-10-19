@@ -1,20 +1,26 @@
 // `pkg add` and `pkg update`: resolve builds, verify, check compatibility, copy
 // files, merge dependencies/scripts/env, run the package manager, write
-// pkg.lock.json. Code inside a build is never executed.
+// pkg.lock.json. Package managers run only after explicit review/opt-in.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import semver from "semver";
-import type { Finding } from "../../shared/checks.ts";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { checkBundle, type Finding } from "../../shared/checks.ts";
 import { checkCompat, describeCompat, mergeProfiles, parsePipRequirement, profileFromManifest, pyprojectDependencies, type Profile } from "../../shared/compat.ts";
-import { normalizePip, parseSpec, unsafePathReason, type Bundle, type EnvVar } from "../../shared/manifest.ts";
+import { decodedText, normalizePip, parseSpec, validateManifest, unsafePathReason, type Bundle, type EnvVar } from "../../shared/manifest.ts";
 import { detectProject, profileFromNodeFiles, profileFromPythonFiles, readJson, readLock, type LockEntry, type Lockfile } from "./detect.ts";
 import { fetchBundle, info, REGISTRY, resolve as resolvePlan, search, type ResolvedBuild } from "./registry.ts";
+
+import { checkProjectPaths, MERGE_FILES, safeTarget } from "./paths.ts";
+import { effectiveDependencies } from "../../shared/dependencies.ts";
 
 export interface AddOptions {
   dir: string;
   force?: boolean;
+  /** Explicit reviewed opt-in to dependency installation. Lifecycle scripts stay disabled. */
   install?: boolean;
   dryRun?: boolean;
   log?: (msg: string) => void;
@@ -84,6 +90,7 @@ export function fileHash(path: string): string | null {
 export function deleteFiles(dir: string, targets: string[]) {
   const root = dir.endsWith(sep) ? dir : dir + sep;
   for (const target of targets) {
+    safeTarget(dir, relative(dir, target).split(sep).join("/"));
     rmSync(target, { force: true });
     for (let d = dirname(target); d.startsWith(root); d = dirname(d)) {
       try {
@@ -149,25 +156,8 @@ type LockFacts = Required<Pick<LockEntry, "builds" | "dependencies">>;
 
 /** The build dependencies and npm/pip packages a build needs, including those in a foundation's own package.json or requirements. */
 function factsFromBundle(bundle: Bundle): LockFacts {
-  const m = bundle.manifest;
-  const text = (p: string) => bundle.files.find((f) => f.path === p && f.encoding !== "base64")?.content ?? "";
-  const npm: Record<string, string> = { ...m.dependencies?.npm, ...m.devDependencies?.npm };
-  try {
-    const pkg = JSON.parse(text("package.json") || "{}");
-    Object.assign(npm, pkg.dependencies, pkg.devDependencies);
-  } catch {
-    // Invalid package.json in a bundle is caught by the registry checks.
-  }
-  const pip: Record<string, string> = {};
-  for (const line of [...text("requirements.txt").split(/\r?\n/), ...text("requirements-dev.txt").split(/\r?\n/), ...pyprojectDependencies(text("pyproject.toml"))]) {
-    const r = parsePipRequirement(line);
-    if (r) pip[r.name] = r.spec || "*";
-  }
-  for (const [name, spec] of Object.entries({ ...m.dependencies?.pip, ...m.devDependencies?.pip })) pip[normalizePip(name)] = spec;
-  return {
-    builds: Object.fromEntries(Object.entries(m.builds ?? {}).map(([id, range]) => [id.toLowerCase(), range])),
-    dependencies: { ...(Object.keys(npm).length ? { npm } : {}), ...(Object.keys(pip).length ? { pip } : {}) },
-  };
+  const effective = effectiveDependencies(bundle);
+  return { builds: bundle.manifest.builds ?? {}, dependencies: Object.fromEntries(Object.entries(effective).map(([eco, deps]) => [eco, Object.fromEntries(Object.entries(deps).map(([n, ranges]) => [n, ranges.join(eco === "pip" ? "," : " ")]))])) };
 }
 
 /** What pkg.lock.json records about a build's needs; lockfiles from pkg <= 0.1.0 lack it, so ask the registry. */
@@ -178,7 +168,7 @@ export async function lockFacts(id: string, entry: LockEntry): Promise<LockFacts
 
 /** Tags a bundle adds to the project, so later builds in the same install can rely on them. */
 function profileFromBundle(bundle: Bundle): Profile {
-  const file = (p: string) => bundle.files.find((f) => f.path === p && f.encoding !== "base64")?.content ?? null;
+  const file = (p: string) => (() => { const f = bundle.files.find((f) => f.path === p); return f ? decodedText(f) : null; })();
   const parts: Profile[] = [profileFromManifest(bundle.manifest)];
   const pkg = file("package.json");
   if (pkg) {
@@ -224,6 +214,7 @@ export function add(specs: string[], opts: AddOptions): Promise<AddResult> {
  */
 export async function update(specs: string[], opts: UpdateOptions): Promise<AddResult> {
   const dir = resolve(opts.dir);
+  checkProjectPaths(dir);
   const lock = readLock(dir);
   if (!lock || !Object.keys(lock.builds).length) throw new AddError(`no builds are installed in ${dir} (no pkg.lock.json)`);
   const ranges = new Map<string, string>();
@@ -238,7 +229,7 @@ export async function update(specs: string[], opts: UpdateOptions): Promise<AddR
   const wanted = [...ranges].map(([id, range]) => `${id}@${range}`);
   for (const [id, entry] of Object.entries(lock.builds)) {
     if (ranges.has(id)) continue;
-    for (const [dep, range] of Object.entries((await lockFacts(id, entry)).builds)) if (ranges.has(dep)) wanted.push(`${dep}@${range}`);
+    wanted.push(`${id}@${entry.version}`);
   }
   return install(wanted, { ...opts, dir }, "update");
 }
@@ -246,11 +237,19 @@ export async function update(specs: string[], opts: UpdateOptions): Promise<AddR
 async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"]): Promise<AddResult> {
   const log = opts.log ?? (() => {});
   const dir = resolve(opts.dir);
+  checkProjectPaths(dir);
   const project = detectProject(dir);
   const lock: Lockfile = project.lock ?? { lockfileVersion: 1, registry: REGISTRY, builds: {} };
 
   log(`Resolving ${specs.join(", ")} ...`);
-  const plan = (await resolvePlan(specs)).builds;
+  // Include every installed consumer. Adding a module must preserve existing contracts too.
+  const explicit = new Set(specs.map((s) => parseSpec(s)?.id));
+  const wanted = [...specs, ...Object.entries(lock.builds).filter(([id]) => !explicit.has(id)).map(([id, e]) => `${id}@${e.version}`)];
+  const plan = (await resolvePlan(wanted)).builds;
+  for (const b of plan) {
+    const errors = validateManifest(b.manifest);
+    if (errors.length) throw new AddError(`invalid resolved manifest for ${b.id}`, { errors });
+  }
 
   const skipped: AddResult["skipped"] = [];
   const todo: ResolvedBuild[] = [];
@@ -263,6 +262,14 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
   log(`Downloading ${todo.map((b) => `${b.id}@${b.version}`).join(", ") || "nothing"} ...`);
   const bundles = await Promise.all(todo.map((b) => fetchBundle(b)));
   for (const [i, bundle] of bundles.entries()) {
+    const report = checkBundle(bundle);
+    if (report.risk === "error") throw new AddError(`invalid bundle for ${todo[i].id}`, report);
+    // Use the inspected bytes for downstream project detection and merge planning.
+    for (const f of bundle.files) {
+      const text = decodedText(f);
+      if (text !== null) { f.content = text; f.encoding = "utf8"; }
+    }
+    todo[i].warnings = report.findings.filter((f) => f.level === "warn");
     for (const f of bundle.files) {
       const bad = unsafePathReason(f.path);
       if (bad) throw new AddError(`${todo[i].id} contains an unsafe path "${f.path}" (${bad}); refusing to install`);
@@ -305,17 +312,18 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
   const claimed = new Map<string, { id: string; bytes: Buffer }>();
   const root = dir.endsWith(sep) ? dir : dir + sep;
   const inRun = new Set(todo.map((b) => b.id));
-  const shipped = new Set(bundles.flatMap((bundle) => bundle.files.map((f) => f.path)));
+  const shipped = new Set(bundles.flatMap((bundle) => bundle.files.map((f) => f.path.toLowerCase())));
   for (const [i, b] of todo.entries()) {
     const bundle = bundles[i];
     const previous = lock.builds[b.id];
     const r: InstalledBuild = { id: b.id, version: b.version, previous: previous?.version ?? null, kind: b.kind, requestedBy: b.requested_by, written: [], unchanged: [], conflicts: [], removed: [], kept: [], integration: bundle.integration ?? null, warnings: b.warnings, env: b.manifest.env ?? {} };
     for (const f of bundle.files) {
-      const target = resolve(dir, f.path);
+      const target = safeTarget(dir, f.path);
       if (!target.startsWith(root)) throw new AddError(`${b.id}: path escapes the project: ${f.path}`);
       const bytes = fileBytes(f);
       let content = bytes;
-      const other = claimed.get(f.path);
+      const claimKey = f.path.toLowerCase();
+      const other = claimed.get(claimKey);
       if (other && other.id !== b.id) {
         if (other.bytes.equals(bytes)) { r.unchanged.push(f.path); continue; }
         if (!opts.force) { r.conflicts.push(`${f.path} (also in ${other.id})`); continue; }
@@ -332,15 +340,15 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
         r.conflicts.push(`${f.path} (deleted locally)`);
         continue;
       }
-      claimed.set(f.path, { id: b.id, bytes });
+      claimed.set(claimKey, { id: b.id, bytes });
       writes.push({ target, bytes: content, executable: !!f.executable, path: f.path });
       r.written.push(f.path);
     }
     // Files the installed version had and this one dropped go too, unless edited or still used by another build.
     for (const [path, hash] of Object.entries(previous?.files ?? {})) {
-      const target = resolve(dir, path);
-      if (shipped.has(path) || unsafePathReason(path) || !target.startsWith(root)) continue;
-      if (Object.entries(lock.builds).some(([id, e]) => !inRun.has(id) && path in e.files)) continue;
+      const target = safeTarget(dir, path);
+      if (shipped.has(path.toLowerCase()) || unsafePathReason(path) || !target.startsWith(root)) continue;
+      if (Object.entries(lock.builds).some(([id, e]) => !inRun.has(id) && Object.keys(e.files).some((p) => p.toLowerCase() === path.toLowerCase()))) continue;
       const current = fileHash(target);
       if (current === hash) { deletes.push(target); r.removed.push(path); }
       else if (current) r.kept.push(path);
@@ -349,48 +357,85 @@ async function install(specs: string[], opts: AddOptions, mode: AddResult["mode"
   }
 
   const result: AddResult = { mode, dir, dryRun: !!opts.dryRun, builds: results, skipped, dependencies: { npm: [], pip: [], conflicts: [] }, scripts: [], env: [], install: [], nextSteps: [] };
-  if (opts.dryRun || (mode === "update" && !todo.length)) return result;
-
-  for (const w of writes) {
-    mkdirSync(dirname(w.target), { recursive: true });
-    writeFileSync(w.target, w.bytes);
-    if (w.executable && !isWin) chmodSync(w.target, 0o755);
-  }
-  deleteFiles(dir, deletes);
-  const projectName = basename(dir).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[._-]+/, "") || "app";
-  for (const [i, b] of todo.entries()) {
-    if (b.kind !== "foundation") continue;
-    if (results[i].written.includes("package.json")) {
-      const pkg = readJson(join(dir, "package.json"));
-      if (pkg) writeFileSync(join(dir, "package.json"), JSON.stringify({ ...pkg, name: projectName }, null, 2) + "\n");
+  // Preflight merges in an isolated directory, then apply the complete plan.
+  const stage = mkdtempSync(join(realpathSync(tmpdir()), "pkg-plan-"));
+  try {
+    for (const name of MERGE_FILES) {
+      const source = safeTarget(dir, name);
+      if (existsSync(source)) writeFileSync(join(stage, name), readFileSync(source));
     }
-    if (results[i].written.includes("pyproject.toml")) {
-      const toml = readFileSync(join(dir, "pyproject.toml"), "utf8");
-      writeFileSync(join(dir, "pyproject.toml"), toml.replace(/^(\[project\][\s\S]*?^name\s*=\s*)["'][^"']*["']/m, `$1"${projectName}"`));
+    for (const w of writes) {
+      const target = safeTarget(stage, w.path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, w.bytes);
     }
-  }
-
-  mergeNpm(dir, todo, result, lock.builds);
-  mergePip(dir, todo, result, lock.builds);
-  mergeEnv(dir, todo, result);
-
-  // Lockfile: exact versions, integrity and file hashes (lets later updates detect local edits).
-  for (const [i, b] of todo.entries()) {
-    const files: Record<string, string> = {};
-    for (const f of bundles[i].files) {
-      const target = join(dir, f.path);
-      if (results[i].written.includes(f.path) || results[i].unchanged.includes(f.path)) files[f.path] = sha256(readFileSync(target));
-      // Still part of the build but edited or deleted locally: the new version is the base it differs from.
-      else if (lock.builds[b.id]?.files[f.path]) files[f.path] = sha256(fileBytes(f));
+    const projectName = basename(dir).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[._-]+/, "") || "app";
+    for (const [i, b] of todo.entries()) {
+      if (b.kind !== "foundation") continue;
+      if (results[i].written.includes("package.json")) {
+        const pkg = readJson(join(stage, "package.json"));
+        writeFileSync(join(stage, "package.json"), JSON.stringify({ ...pkg, name: projectName }, null, 2) + "\n");
+      }
+      if (results[i].written.includes("pyproject.toml")) {
+        const toml = readFileSync(join(stage, "pyproject.toml"), "utf8");
+        writeFileSync(join(stage, "pyproject.toml"), toml.replace(/^(\[project\][\s\S]*?^name\s*=\s*)["'][^"']*["']/m, `$1"${projectName}"`));
+      }
     }
-    const entry: LockEntry = { version: b.version, kind: b.kind, integrity: b.integrity, provides: b.manifest.stack?.provides ?? [], ...factsFromBundle(bundles[i]), files };
-    lock.builds[b.id] = entry;
-  }
-  lock.registry = REGISTRY;
-  writeFileSync(join(dir, "pkg.lock.json"), JSON.stringify(lock, null, 2) + "\n");
+    mergeNpm(stage, todo, result, lock.builds);
+    mergePip(stage, todo, result, lock.builds);
+    mergeEnv(stage, todo, result);
+    if (result.dependencies.conflicts.length) throw new AddError("dependency conflicts; no project files were changed", result.dependencies);
+    for (const name of MERGE_FILES.filter((p) => p !== "pkg.lock.json")) {
+      const path = join(stage, name);
+      if (!existsSync(path)) continue;
+      const bytes = readFileSync(path);
+      const existing = writes.find((w) => w.path === name);
+      if (existing) existing.bytes = bytes;
+      else if (fileHash(safeTarget(dir, name)) !== sha256(bytes)) writes.push({ target: safeTarget(dir, name), bytes, executable: false, path: name });
+    }
+    // Include the lockfile in the same rollback set as project files.
+    for (const [i, b] of todo.entries()) {
+      const files: Record<string, string> = {};
+      for (const f of bundles[i].files) {
+        const write = writes.find((w) => w.path.toLowerCase() === f.path.toLowerCase());
+        if (results[i].written.includes(f.path) || results[i].unchanged.includes(f.path)) files[f.path] = write ? sha256(write.bytes) : sha256(readFileSync(safeTarget(dir, f.path)));
+        else if (lock.builds[b.id]?.files[f.path]) files[f.path] = sha256(fileBytes(f));
+      }
+      lock.builds[b.id] = { version: b.version, kind: b.kind, integrity: b.integrity, provides: b.manifest.stack?.provides ?? [], ...factsFromBundle(bundles[i]), files };
+    }
+    lock.registry = REGISTRY;
+    writes.push({ target: safeTarget(dir, "pkg.lock.json"), path: "pkg.lock.json", bytes: Buffer.from(JSON.stringify(lock, null, 2) + "\n"), executable: false });
+    log(formatAddResult({ ...result, dryRun: true }));
+    if (opts.install === true) log("After review: npm install --ignore-scripts / pip install --only-binary=:all: (explicit opt-in).");
+    if (opts.dryRun) return result;
+    // Keep rollback bytes until all project writes and deletions have succeeded.
+    const backup = new Map<string, Buffer | null>();
+    for (const target of [...writes.map((w) => w.target), ...deletes]) {
+      safeTarget(dir, relative(dir, target).split(sep).join("/"));
+      backup.set(target, existsSync(target) ? readFileSync(target) : null);
+    }
+    try {
+      for (const w of writes) {
+        safeTarget(dir, w.path);
+        mkdirSync(dirname(w.target), { recursive: true });
+        writeFileSync(w.target, w.bytes);
+        if (w.executable && !isWin) chmodSync(w.target, 0o755);
+      }
+      deleteFiles(dir, deletes);
+    } catch (e) {
+      for (const [target, bytes] of backup) {
+        safeTarget(dir, relative(dir, target).split(sep).join("/"));
+        if (bytes === null) rmSync(target, { force: true });
+        else { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, bytes); }
+      }
+      throw e;
+    }
+  } finally { rmSync(stage, { recursive: true, force: true }); }
 
-  if (opts.install !== false) installDependencies(dir, todo, result, log);
-  result.nextSteps = nextSteps(dir, result);
+  if (opts.install === true) installDependencies(dir, todo, result, log);
+  else result.nextSteps.push("Review the dry-run plan and build warnings before opting in with --install-deps; dependencies have not been installed.");
+  result.nextSteps.push(...nextSteps(dir, result));
+  if (result.install.some((i) => !i.ok)) throw new AddError("dependency installation failed; rerun with --install-deps to retry", result);
   return result;
 }
 
@@ -436,18 +481,14 @@ function mergeNpm(dir: string, todo: ResolvedBuild[], result: AddResult, install
 
 /** Adds requirement lines to [project].dependencies, skipping packages already listed. */
 function addToPyproject(toml: string, lines: string[]): { toml: string; added: string[] } {
-  const m = /^(\[project\][\s\S]*?^dependencies\s*=\s*\[)([\s\S]*?)(\])/m.exec(toml);
-  const have = new Set(m ? [...m[2].matchAll(/["']([^"']+)["']/g)].map((x) => parsePipRequirement(x[1])?.name) : []);
+  const data = parseToml(toml) as Record<string, any>;
+  data.project ??= {};
+  const current = pyprojectDependencies(toml);
+  const have = new Set(current.map((s) => parsePipRequirement(s)?.name));
   const added = lines.filter((l) => !have.has(normalizePip(parsePipRequirement(l)?.name ?? "")));
   if (!added.length) return { toml, added };
-  if (m) {
-    const body = m[2].trimEnd();
-    const sep = body && !body.endsWith(",") ? "," : "";
-    toml = toml.replace(m[0], `${m[1]}${body}${sep}\n${added.map((l) => `    "${l}",`).join("\n")}\n${m[3]}`);
-  } else {
-    toml = toml.replace(/^\[project\]\s*$/m, `[project]\ndependencies = [\n${added.map((l) => `    "${l}",`).join("\n")}\n]`);
-  }
-  return { toml, added };
+  data.project.dependencies = [...current, ...added];
+  return { toml: stringifyToml(data), added };
 }
 
 function mergePip(dir: string, todo: ResolvedBuild[], result: AddResult, installed: Record<string, LockEntry>) {
@@ -513,17 +554,18 @@ function mergeEnv(dir: string, todo: ResolvedBuild[], result: AddResult) {
 }
 
 function installDependencies(dir: string, todo: ResolvedBuild[], result: AddResult, log: (m: string) => void) {
+  checkProjectPaths(dir);
   const project = detectProject(dir);
-  const wroteNode = result.builds.some((b) => b.written.includes("package.json"));
-  if (project.npm && (result.dependencies.npm.length || wroteNode || !existsSync(join(dir, "node_modules")))) {
+  if (project.npm) {
     const pm = project.npm;
+    if (pm !== "npm") throw new AddError("automatic dependency installation supports npm only; review and run your package manager manually");
     log(`Installing npm dependencies with ${pm} ...`);
-    const res = run(pm, ["install"], dir, isWin);
-    result.install.push({ command: `${pm} install`, ok: res.ok, output: res.ok ? undefined : res.output });
+    const res = run(pm, ["install", "--ignore-scripts"], dir, isWin);
+    result.install.push({ command: `${pm} install --ignore-scripts`, ok: res.ok, output: res.ok ? undefined : res.output });
   }
 
-  const wrotePython = result.builds.some((b) => b.written.some((p) => /^(?:pyproject\.toml|requirements(?:-dev)?\.txt)$/.test(p)));
-  if (project.python && (result.dependencies.pip.length || wrotePython)) {
+  if (project.python) {
+    safeTarget(dir, ".venv");
     let py = venvPython(dir);
     if (!py) {
       const system = findPython();
@@ -539,10 +581,10 @@ function installDependencies(dir: string, todo: ResolvedBuild[], result: AddResu
         return;
       }
     }
-    const reqFile = existsSync(join(dir, "requirements-dev.txt")) ? "requirements-dev.txt" : existsSync(join(dir, "requirements.txt")) ? "requirements.txt" : null;
-    const args = reqFile
-      ? ["-m", "pip", "install", "-q", "-r", reqFile]
-      : ["-m", "pip", "install", "-q", ...pyprojectDependencies(readFileSync(join(dir, "pyproject.toml"), "utf8"))];
+    const reqFiles = ["requirements.txt", "requirements-dev.txt"].filter((p) => existsSync(join(dir, p)));
+    const args = reqFiles.length
+      ? ["-m", "pip", "install", "--only-binary=:all:", "-q", ...reqFiles.flatMap((p) => ["-r", p])]
+      : ["-m", "pip", "install", "--only-binary=:all:", "-q", ...pyprojectDependencies(readFileSync(join(dir, "pyproject.toml"), "utf8"))];
     log(`Installing Python dependencies into .venv ...`);
     const res = run(py, args, dir, false);
     result.install.push({ command: `.venv python ${args.join(" ")}`, ok: res.ok, output: res.ok ? undefined : res.output });

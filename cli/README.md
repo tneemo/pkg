@@ -15,7 +15,7 @@ npx -y @tneemo/pkg init && npx -y @tneemo/pkg publish
 npx -y @tneemo/pkg mcp          # stdio MCP server
 ```
 
-Every command takes `--json`. No account is needed to search or install; publishing uses your GitHub login. Installing never runs code from a build. Set `PKG_REGISTRY` to use another registry.
+Every command takes `--json`. No account is needed to search or install; publishing uses your GitHub login. Review `add --dry-run` before writing files. Package managers are skipped by default; after reviewing warnings use `--install-deps` to run npm with lifecycle scripts disabled or pip with wheels only. Installed code and agent configuration still require review. Set `PKG_REGISTRY` to use another registry.
 
 ## Global installation and command names
 

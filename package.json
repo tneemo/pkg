@@ -12,7 +12,7 @@
     "build": "npm run build -w cli",
     "dev": "npm run dev -w registry",
     "seed": "node scripts/seed.mjs",
-    "test": "node --test \"test/*.test.*\"",
+    "test": "node --experimental-transform-types --test \"test/*.test.*\"",
     "typecheck": "tsc -p cli --noEmit && tsc -p registry --noEmit"
   },
   "devDependencies": {
@@ -21,6 +21,8 @@
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "semver": "^7.7.0"
+    "@renovatebot/pep440": "^5.0.1",
+    "semver": "^7.7.0",
+    "smol-toml": "^1.9.1"
   }
 }

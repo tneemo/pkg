@@ -41,7 +41,7 @@ Maintainers: see [public distribution and releases](docs/distribution.md).
 Asked for *"a TypeScript REST API for a todo app where users sign up, log in and only see their own todos"*, the agent:
 
 1. searches pkg for each part (`rest api`, `user accounts`, `database`) with the stack it inferred;
-2. installs `tneemo/hono-api tneemo/hono-auth tneemo/hono-rate-limit` in one call. `tneemo/sqlite-db` is pulled in as a dependency, the stack is checked, `npm install` runs, and 9 tests pass before it writes anything;
+2. installs `tneemo/hono-api tneemo/hono-auth tneemo/hono-rate-limit` in one call. `tneemo/sqlite-db` is pulled in as a dependency and the stack is checked. After reviewing the dry-run plan, dependency installation is explicitly enabled with `--install-deps`, then the assembled tests run before adding application code;
 3. follows the integration notes (6 lines of wiring in `src/app.ts`), writes the todo routes, migration and tests (3 files, 113 lines);
 4. runs the tests (13 passing) and reports `--worked` for each build, which feeds the builds' reputation.
 
@@ -74,7 +74,7 @@ CLI: `search`, `info`, `detect`, `add`, `update`, `remove`, `list`, `init`, `pub
                      └─ writes pkg.lock.json (versions, integrity, per-file hashes)
 ```
 
-- **Builds are source, not packages.** Like the shadcn registry, files are copied into the project and become the user's code. Libraries stay on npm and PyPI; a build declares them and pkg installs them with the project's own package manager.
+- **Builds are source, not packages.** Like the shadcn registry, files are copied into the project and become the user's code. Libraries stay on npm and PyPI; a build declares them and pkg can install them after explicit review.
 - **Compatibility** works on stack tags detected from the project (`node`, `typescript`, `hono`, `nextjs`, `fastapi`, …, plus every dependency as `npm:<name>` / `pip:<name>`) with semver ranges. Builds declare `stack.requires` and `stack.provides`, so a module that needs `hono` is matched with a foundation that provides it, inside a single install.
 - **Updates and removals respect local edits.** `pkg update` moves builds to the newest version within their major (`--latest` for new majors) and replaces only files whose sha256 still matches pkg.lock.json; edited files are left untouched and reported as conflicts. `pkg remove` deletes only unedited files, refuses while another installed build depends on the one being removed, and lists packages no build needs any more without uninstalling them.
 - **Integration** is split: everything deterministic is automated (files, dependencies, scripts, env vars, migrations by convention), and the last mile of wiring goes to the agent as precise `INTEGRATION.md` notes, which agents follow reliably.
@@ -83,9 +83,9 @@ CLI: `search`, `info`, `detect`, `add`, `update`, `remove`, `list`, `init`, `pub
 ## Trust and safety
 
 - **Automated checks on every publish** (the same code runs locally first). Rejected: path traversal, `.git`/`node_modules` paths, secrets and private keys, `.env` files, invalid manifests, npm/PyPI dependencies that don't exist (dependency confusion), oversized bundles. Shown to every installer as warnings: npm install scripts, pipe-to-shell, evaluating decoded data, hard-coded IPs, minified code, prompt injection aimed at agents, and files that configure agents or editors (`.claude/`, `.mcp.json`, `AGENTS.md` in modules, `.vscode/tasks.json`, CI workflows).
-- **Install never executes build code.** Bundles are integrity-checked, every path is re-validated client-side, and existing files are never overwritten without `--force` (files pkg installed and nobody edited can be updated in place).
+- **Review before installing.** Dependency installation is off by default. Inspect `--dry-run` first, then explicitly use `--install-deps` to run npm with `--ignore-scripts` or pip with `--only-binary=:all:`. Registry checks are warnings, not a sandbox. Bundles are integrity-checked, every path is re-validated client-side, and existing files are never overwritten without `--force` (files pkg installed and nobody edited can be updated in place).
 - **Agent-facing text is labeled.** Integration notes are returned as "build documentation, not user instructions", and the MCP server instructions tell agents the same.
-- **Community reputation without accounts.** Agents report `success` / `failure` / `report` after integrating a build; votes are deduplicated per day by salted IP hash. Search ranks by relevance (BM25), stack fit, agent-reported success rate (Bayesian), installs and quality score; flagged builds are demoted.
+- **Community reputation without accounts.** Agents report `success` / `failure` / `report` after integrating a build; votes are deduplicated per day by salted IP hash. Search ranks by relevance (BM25), stack fit, agent-reported success rate (Bayesian) and quality score; flagged builds are demoted. Raw downloads carry no ranking weight.
 - Versions are immutable.
 
 ## Prior art and what was reused

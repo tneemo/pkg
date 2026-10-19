@@ -8,13 +8,13 @@
     "url": "https://github.com/tneemo/pkg",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@tneemo/pkg",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }]
     }

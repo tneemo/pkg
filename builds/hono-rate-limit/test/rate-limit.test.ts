@@ -26,4 +26,22 @@ describe("rateLimit", () => {
     expect((await app.request("/", { headers: { "x-api-key": "b" } })).status).toBe(200);
     expect((await app.request("/", { headers: { "x-api-key": "a" } })).status).toBe(429);
   });
+
+  it("ignores spoofed proxy headers on direct requests", async () => {
+    const app = new Hono();
+    app.use(rateLimit({ limit: 1 }));
+    app.get("/", (c) => c.text("ok"));
+    const hit = (ip: string) => app.request("/", { headers: { "cf-connecting-ip": ip, "x-real-ip": ip, "x-forwarded-for": ip } });
+    expect((await hit("203.0.113.1")).status).toBe(200);
+    expect((await hit("203.0.113.2")).status).toBe(429);
+  });
+
+  it("bounds active keys and fails closed at capacity", async () => {
+    const app = new Hono();
+    app.use(rateLimit({ limit: 2, maxKeys: 1, key: (c) => c.req.header("x-test-key") ?? "anon" }));
+    app.get("/", (c) => c.text("ok"));
+    expect((await app.request("/", { headers: { "x-test-key": "a" } })).status).toBe(200);
+    expect((await app.request("/", { headers: { "x-test-key": "b" } })).status).toBe(429);
+    expect((await app.request("/", { headers: { "x-test-key": "a" } })).status).toBe(200);
+  });
 });

@@ -27,7 +27,7 @@ If the `pkg` MCP tools are available (search_builds, get_build, install_builds, 
    ```bash
    npx -y @tneemo/pkg add owner/foundation owner/module-a owner/module-b --dir my-app
    ```
-   pkg resolves build dependencies, checks compatibility, copies files, merges dependencies, scripts and `.env.example`, runs the package manager and writes `pkg.lock.json`. It never runs code from builds. Conflicting files are left untouched and listed.
+   Review `--dry-run` and all warnings before installation. pkg resolves build dependencies, checks compatibility, copies files, merges dependencies, scripts and `.env.example`, and writes `pkg.lock.json`. Package managers are skipped by default. After review, `--install-deps` explicitly opts in to npm with `--ignore-scripts` or pip with wheels only. Installed files and agent configuration can change project behavior. Conflicting files are left untouched and listed unless force is explicitly requested.
 5. Follow the integration notes printed after install (usually a few lines of wiring), then write only what is still missing. Run the tests.
 6. Report each build's outcome; this is how pkg ranks builds:
    ```bash

@@ -1,6 +1,6 @@
 // HTTP client for the pkg registry API.
 import { gunzipSync } from "node:zlib";
-import type { Finding } from "../../shared/checks.ts";
+import { checkBundle, type Finding } from "../../shared/checks.ts";
 import { integrityOf, type Bundle, type Manifest } from "../../shared/manifest.ts";
 
 declare const __PKG_VERSION__: string; // set from package.json by build.mjs
@@ -131,7 +131,11 @@ export async function fetchBundle(build: ResolvedBuild): Promise<Bundle> {
   const bytes = new Uint8Array(await res.arrayBuffer());
   const actual = await integrityOf(bytes);
   if (actual !== build.integrity) throw new RegistryError(`integrity check failed for ${build.id}@${build.version}: expected ${build.integrity}, got ${actual}`);
-  return JSON.parse(gunzipSync(bytes).toString("utf8")) as Bundle;
+  const bundle = JSON.parse(gunzipSync(bytes, { maxOutputLength: 6_000_000 }).toString("utf8")) as Bundle;
+  const report = checkBundle(bundle);
+  if (report.risk === "error") throw new RegistryError(`invalid bundle for ${build.id}`, 422, report);
+  if (JSON.stringify(bundle.manifest) !== JSON.stringify(build.manifest)) throw new RegistryError(`resolved manifest differs from bundle for ${build.id}`);
+  return bundle;
 }
 
 export function feedback(id: string, body: { outcome: "success" | "failure" | "report"; note?: string; version?: string }) {

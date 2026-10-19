@@ -20,10 +20,10 @@ Discover
 
 Install
   pkg add <owner/name...>    install builds and their dependencies
-                             [--dir path] [--dry-run] [--force] [--no-install]
+                             [--dir path] [--dry-run] [--force] [--install-deps] [--no-install]
   pkg update [owner/name...] update installed builds (all by default) within their major version;
                              files edited since install are kept and reported as conflicts
-                             [--latest] [--dry-run] [--force] [--no-install]
+                             [--latest] [--dry-run] [--force] [--install-deps] [--no-install]
   pkg remove <owner/name...> delete the files a build installed (edited ones are kept) and its
                              lock entry; lists dependencies no build needs any more
                              [--dry-run] [--force]
@@ -54,6 +54,7 @@ const { values: opts, positionals } = parseArgs({
     "dry-run": { type: "boolean" },
     force: { type: "boolean" },
     "no-install": { type: "boolean" },
+    "install-deps": { type: "boolean" },
     latest: { type: "boolean" },
     name: { type: "string" },
     owner: { type: "string" },
@@ -97,13 +98,13 @@ async function main() {
     case "install":
     case "i": {
       if (!args.length) throw new Error("usage: pkg add <owner/name> [more builds...]");
-      const res = await add(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !opts["no-install"], log });
+      const res = await add(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !!opts["install-deps"] && !opts["no-install"], log });
       return out(res, formatAddResult(res));
     }
     case "update":
     case "upgrade":
     case "up": {
-      const res = await update(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !opts["no-install"], latest: !!opts.latest, log });
+      const res = await update(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !!opts["install-deps"] && !opts["no-install"], latest: !!opts.latest, log });
       return out(res, formatAddResult(res));
     }
     case "remove":
@@ -164,6 +165,6 @@ if (opts.help) console.log(HELP);
 else main().catch((e) => {
   const details: any = e instanceof AddError || e instanceof registry.RegistryError ? (e as AddError).details : undefined;
   if (json) console.log(JSON.stringify({ error: e.message, details }, null, 2));
-  else console.error(`pkg: ${e.message}${details?.findings ? `\n${formatReport(details)}` : ""}`);
+  else console.error(`pkg: ${e.message}${details?.install ? `\n${formatAddResult(details)}` : details?.findings ? `\n${formatReport(details)}` : ""}`);
   process.exitCode = 1;
 });

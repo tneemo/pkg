@@ -1,12 +1,15 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getConnInfo } from "@hono/node-server/conninfo";
 
 export interface RateLimitOptions {
   /** Window length in milliseconds (default 60 000). */
   windowMs?: number;
   /** Requests allowed per key per window (default 60). */
   limit?: number;
-  /** How to identify a client. Defaults to the client IP from common proxy headers. */
+  /** How to identify a client. Defaults to the Node adapter's socket peer address. */
   key?: (c: Context) => string;
+  /** Maximum active keys before new identities fail closed (default 10,000). */
+  maxKeys?: number;
 }
 
 interface Bucket {
@@ -15,8 +18,8 @@ interface Bucket {
 }
 
 function clientIp(c: Context): string {
-  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  return c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? forwarded ?? "unknown";
+  try { return getConnInfo(c).remote.address ?? "unknown"; }
+  catch { return "unknown"; }
 }
 
 /**
@@ -27,6 +30,8 @@ function clientIp(c: Context): string {
 export function rateLimit(options: RateLimitOptions = {}): MiddlewareHandler {
   const windowMs = options.windowMs ?? 60_000;
   const limit = options.limit ?? 60;
+  const maxKeys = options.maxKeys ?? 10_000;
+  if (![windowMs, limit, maxKeys].every((n) => Number.isSafeInteger(n) && n > 0)) throw new Error("rate limit options must be positive integers");
   const keyOf = options.key ?? clientIp;
   const buckets = new Map<string, Bucket>();
   let lastSweep = Date.now();
@@ -40,6 +45,13 @@ export function rateLimit(options: RateLimitOptions = {}): MiddlewareHandler {
     const key = keyOf(c);
     let bucket = buckets.get(key);
     if (!bucket || bucket.resetAt <= now) {
+      if (!bucket && buckets.size >= maxKeys) {
+        for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+        if (buckets.size >= maxKeys) {
+          c.header("Retry-After", String(Math.ceil(windowMs / 1000)));
+          return c.json({ error: "Rate limiter capacity exceeded" }, 429);
+        }
+      }
       bucket = { count: 0, resetAt: now + windowMs };
       buckets.set(key, bucket);
     }

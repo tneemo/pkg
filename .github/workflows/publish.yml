@@ -66,10 +66,16 @@ jobs:
           PKG_REGISTRY: http://127.0.0.1:8787
       - name: Inspect the package contents
         run: npm pack --workspace cli --dry-run
+      - name: Verify isolated tarball installation, CLI aliases, setup and MCP
+        run: node scripts/release-smoke.mjs --pack
       - name: Publish public package with OIDC and provenance
         run: npm publish --workspace cli --access public --provenance
       - name: Verify the published package ownership marker
         run: node scripts/check-distribution.mjs --published
+      - name: Verify the public npm artifact in a fresh directory
+        run: node scripts/release-smoke.mjs "@tneemo/pkg@$RELEASE_VERSION"
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
       - run: mcp-publisher login github-oidc
       - run: mcp-publisher publish server.json
       - run: node scripts/check-distribution.mjs --registry

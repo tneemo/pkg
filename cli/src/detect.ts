@@ -1,6 +1,8 @@
 // Detects a project's stack from the files on disk. No configuration needed.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import semver from "semver";
+import { parseSpec, unsafePathReason } from "../../shared/manifest.ts";
 import {
   mergeProfiles,
   profileFromPackageJson,
@@ -61,7 +63,16 @@ export function readJson(path: string): any {
 
 export function readLock(dir: string): Lockfile | null {
   const lock = readJson(join(dir, "pkg.lock.json"));
-  return lock && typeof lock.builds === "object" ? lock : null;
+  if (lock === null) return null;
+  if (lock.lockfileVersion !== 1 || !lock.builds || typeof lock.builds !== "object" || Array.isArray(lock.builds)) throw new Error("invalid pkg.lock.json");
+  for (const [id, raw] of Object.entries(lock.builds)) {
+    const e = raw as LockEntry;
+    if (!parseSpec(id) || !e || !semver.valid(e.version) || !e.files || typeof e.files !== "object" || Array.isArray(e.files) ||
+      !Array.isArray(e.provides) || e.provides.some((p) => typeof p !== "string") ||
+      Object.entries(e.files).some(([p, h]) => unsafePathReason(p) || typeof h !== "string" || !/^[a-f0-9]{64}$/.test(h))) throw new Error(`invalid lock entry: ${id}`);
+    if (e.builds !== undefined && (!e.builds || typeof e.builds !== "object" || Array.isArray(e.builds) || Object.entries(e.builds).some(([dep, range]) => typeof range !== "string" || !parseSpec(`${dep}@${range}`)))) throw new Error(`invalid build constraints: ${id}`);
+  }
+  return lock;
 }
 
 function installedVersions(dir: string, names: string[]): Record<string, string> {
