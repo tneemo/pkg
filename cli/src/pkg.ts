@@ -4,9 +4,10 @@ import { parseArgs } from "node:util";
 import { mergeProfiles, parseStack, withImpliedRuntime } from "../../shared/compat.ts";
 import { detectProject } from "./detect.ts";
 import { formatInfo, formatProject, formatReport, formatSearch } from "./format.ts";
-import { add, AddError, formatAddResult } from "./install.ts";
+import { add, AddError, formatAddResult, update } from "./install.ts";
 import { init, publish } from "./publish.ts";
 import * as registry from "./registry.ts";
+import { formatRemoveResult, remove } from "./remove.ts";
 import { setup } from "./setup.ts";
 
 const HELP = `pkg ${registry.VERSION}: find, install and publish reusable software builds
@@ -20,6 +21,12 @@ Discover
 Install
   pkg add <owner/name...>    install builds and their dependencies
                              [--dir path] [--dry-run] [--force] [--no-install]
+  pkg update [owner/name...] update installed builds (all by default) within their major version;
+                             files edited since install are kept and reported as conflicts
+                             [--latest] [--dry-run] [--force] [--no-install]
+  pkg remove <owner/name...> delete the files a build installed (edited ones are kept) and its
+                             lock entry; lists dependencies no build needs any more
+                             [--dry-run] [--force]
   pkg list                   builds installed in this project (pkg.lock.json)
 
 Publish
@@ -47,6 +54,7 @@ const { values: opts, positionals } = parseArgs({
     "dry-run": { type: "boolean" },
     force: { type: "boolean" },
     "no-install": { type: "boolean" },
+    latest: { type: "boolean" },
     name: { type: "string" },
     owner: { type: "string" },
     worked: { type: "boolean" },
@@ -91,6 +99,19 @@ async function main() {
       if (!args.length) throw new Error("usage: pkg add <owner/name> [more builds...]");
       const res = await add(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !opts["no-install"], log });
       return out(res, formatAddResult(res));
+    }
+    case "update":
+    case "upgrade":
+    case "up": {
+      const res = await update(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"], install: !opts["no-install"], latest: !!opts.latest, log });
+      return out(res, formatAddResult(res));
+    }
+    case "remove":
+    case "uninstall":
+    case "rm": {
+      if (!args.length) throw new Error("usage: pkg remove <owner/name> [more builds...]");
+      const res = await remove(args, { dir, force: !!opts.force, dryRun: !!opts["dry-run"] });
+      return out(res, formatRemoveResult(res));
     }
     case "list":
     case "ls": {

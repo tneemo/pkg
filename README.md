@@ -34,9 +34,9 @@ pkg supplied 23 of the 26 files and 519 lines; the agent wrote 3 files. This exa
 | Agent Skill | [`skill/pkg/SKILL.md`](skill/pkg/SKILL.md) | Skill-aware agents; installed by `pkg setup`. |
 | HTTP API | [`/llms.txt`](https://pkg.tneemo.com/llms.txt) | Direct integrations; agents that only fetch URLs. |
 
-MCP tools: `search_builds`, `get_build`, `install_builds`, `detect_stack`, `report_outcome`, `publish_build`.
+MCP tools: `search_builds`, `get_build`, `install_builds`, `update_builds`, `remove_builds`, `detect_stack`, `report_outcome`, `publish_build`.
 
-CLI: `search`, `info`, `detect`, `add`, `list`, `init`, `publish`, `feedback`, `mcp`, `setup`.
+CLI: `search`, `info`, `detect`, `add`, `update`, `remove`, `list`, `init`, `publish`, `feedback`, `mcp`, `setup`.
 
 ## How it works
 
@@ -54,6 +54,7 @@ CLI: `search`, `info`, `detect`, `add`, `list`, `init`, `publish`, `feedback`, `
 
 - **Builds are source, not packages.** Like the shadcn registry, files are copied into the project and become the user's code. Libraries stay on npm and PyPI; a build declares them and pkg installs them with the project's own package manager.
 - **Compatibility** works on stack tags detected from the project (`node`, `typescript`, `hono`, `nextjs`, `fastapi`, …, plus every dependency as `npm:<name>` / `pip:<name>`) with semver ranges. Builds declare `stack.requires` and `stack.provides`, so a module that needs `hono` is matched with a foundation that provides it, inside a single install.
+- **Updates and removals respect local edits.** `pkg update` moves builds to the newest version within their major (`--latest` for new majors) and replaces only files whose sha256 still matches pkg.lock.json; edited files are left untouched and reported as conflicts. `pkg remove` deletes only unedited files, refuses while another installed build depends on the one being removed, and lists packages no build needs any more without uninstalling them.
 - **Integration** is split: everything deterministic is automated (files, dependencies, scripts, env vars, migrations by convention), and the last mile of wiring goes to the agent as precise `INTEGRATION.md` notes, which agents follow reliably.
 - **Publishing** is `pkg init` (writes `pkg.json` by detecting the stack, imported packages, the folder's place in the project and imports of other installed builds) and `pkg publish`. Identity is your GitHub login (`gh auth token` / `GITHUB_TOKEN`); builds are named `<login>/<name>`. pkg has no accounts.
 
@@ -142,7 +143,7 @@ test/       unit tests and the MCP end-to-end test
 
 - GitHub Actions OIDC tokens for publishing from CI without a personal token (a `GITHUB_TOKEN` already works).
 - Semantic search (Workers AI + Vectorize) on top of FTS5; today agents search per part with plain words.
-- `pkg update` / `pkg remove` (the lockfile already records per-file hashes to make them safe), version yanking and moderation tooling.
+- Version yanking and moderation tooling.
 - Modules published from a subfolder can only ship files inside that folder.
 
 ## License

@@ -17,6 +17,11 @@ export interface LockEntry {
   kind: string;
   integrity: string;
   provides: string[];
+  /** Other builds this one needs (manifest "builds"). Missing in lockfiles from pkg <= 0.1.0. */
+  builds?: Record<string, string>;
+  /** npm and pip packages the build needs, name -> range. Missing in lockfiles from pkg <= 0.1.0. */
+  dependencies?: { npm?: Record<string, string>; pip?: Record<string, string> };
+  /** Path -> sha256 of the file as installed, to tell untouched files from local edits. */
   files: Record<string, string>;
 }
 
