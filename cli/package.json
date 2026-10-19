@@ -1,6 +1,6 @@
 {
   "name": "@tneemo/pkg",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Find, install and publish reusable software builds. The CLI and MCP server for pkg.tneemo.com.",
   "license": "MIT",
   "type": "module",
