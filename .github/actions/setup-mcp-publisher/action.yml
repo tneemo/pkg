@@ -1,0 +1,15 @@
+name: Set up MCP publisher
+description: Install the official publisher at a pinned version and verify its SHA-256.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        dir="$(mktemp -d)"
+        curl --fail --silent --show-error --location --retry 3 \
+          https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz \
+          --output "$dir/publisher.tar.gz"
+        echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  $dir/publisher.tar.gz" | sha256sum --check
+        tar -xzf "$dir/publisher.tar.gz" -C "$dir" mcp-publisher
+        echo "$dir" >> "$GITHUB_PATH"

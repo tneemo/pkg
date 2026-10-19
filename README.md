@@ -14,6 +14,28 @@ claude mcp add pkg -- npx -y @tneemo/pkg mcp
 
 Then ask your agent for what you want to build. No spec files and no accounts.
 
+### Global CLI names
+
+Node.js 20+ is required. `npm install -g @tneemo/pkg` installs both `pkg` and
+`tpkg`, pointing to the same CLI. The legacy [Vercel `pkg`](https://github.com/vercel/pkg)
+package also installs a global `pkg` executable. These names collide in a shared
+npm global prefix; installing both may fail with `EEXIST` or leave `pkg` pointing
+to the other tool. `tpkg` identifies this CLI once it is installed, but does not
+prevent the installation collision because both aliases are shipped.
+
+For coexistence, avoid the global install and run an explicit package command:
+
+```bash
+npm exec --yes --package=@tneemo/pkg -- tpkg setup
+npm exec --yes --package=@tneemo/pkg -- tpkg mcp
+```
+
+If you no longer need Vercel's tool, uninstall the unscoped `pkg` package before
+installing `@tneemo/pkg` globally. Do not use `--force` to overwrite its executable.
+
+The official MCP Registry entry is [`io.github.tneemo/pkg`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.tneemo%2Fpkg/versions/latest).
+Maintainers: see [public distribution and releases](docs/distribution.md).
+
 ## What it looks like
 
 Asked for *"a TypeScript REST API for a todo app where users sign up, log in and only see their own todos"*, the agent:
@@ -125,8 +147,10 @@ npx wrangler secret put IP_SALT         # any random string
 npm run deploy                          # applies migrations, deploys, binds pkg.tneemo.com
 cd .. && PKG_TOKEN=<admin token> npm run seed
 
-cd cli && npm publish --access public   # publishes @tneemo/pkg to npm
 ```
+
+The npm package and MCP Registry metadata use the separate, manually confirmed
+[distribution workflows](docs/distribution.md).
 
 ## Repository layout
 

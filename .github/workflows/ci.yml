@@ -15,6 +15,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: node scripts/check-distribution.mjs
+      - uses: ./.github/actions/setup-mcp-publisher
+      - run: mcp-publisher validate server.json
       - run: npm run typecheck
       - run: npm run build
       - name: Start a local registry and publish the example builds

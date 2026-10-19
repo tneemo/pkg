@@ -17,4 +17,25 @@ npx -y @tneemo/pkg mcp          # stdio MCP server
 
 Every command takes `--json`. No account is needed to search or install; publishing uses your GitHub login. Installing never runs code from a build. Set `PKG_REGISTRY` to use another registry.
 
+## Global installation and command names
+
+Requires Node.js 20+. `npm install -g @tneemo/pkg` provides both `pkg` and `tpkg`.
+The legacy Vercel package named `pkg` also owns the global `pkg` command. Both
+packages cannot reliably share the same npm global prefix: installation may fail
+with `EEXIST` or `pkg` may resolve to the other tool. The `tpkg` alias remains
+available after a successful installation, but does not remove this install-time
+collision. Avoid `--force`.
+
+To keep Vercel's tool, use an explicit package invocation instead of a global install:
+
+```bash
+npm exec --yes --package=@tneemo/pkg -- tpkg setup
+npm exec --yes --package=@tneemo/pkg -- tpkg mcp
+```
+
+Alternatively, uninstall the legacy unscoped `pkg` first if you no longer use it.
+The official MCP Registry name is `io.github.tneemo/pkg`; its stdio command is
+`npx -y @tneemo/pkg mcp`. For reproducible client configuration, pin the approved
+package version, for example `npx -y @tneemo/pkg@0.1.0 mcp`.
+
 Docs: https://pkg.tneemo.com/docs · Agent guide: https://pkg.tneemo.com/llms.txt

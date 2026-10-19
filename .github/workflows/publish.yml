@@ -1,0 +1,75 @@
+name: Publish npm and MCP
+
+# Publication always requires a maintainer's explicit dispatch and confirmation.
+# A push, tag or GitHub Release alone never publishes a package.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Approved version (must match main and its vVERSION tag)
+        required: true
+        type: string
+      confirmation:
+        description: 'Type: publish @tneemo/pkg@VERSION'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-distribution
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'tneemo/pkg' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.19.0
+      - run: npm ci
+      - name: Verify explicit approval, immutable version and release tag
+        run: node scripts/check-distribution.mjs --release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      - uses: ./.github/actions/setup-mcp-publisher
+      - run: mcp-publisher validate server.json
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Start local registry and seed test builds
+        run: |
+          set -euo pipefail
+          echo "ADMIN_TOKEN=ci-admin-token" > registry/.dev.vars
+          npm run dev > registry.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf 'http://127.0.0.1:8787/api/search?q=' > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS 'http://127.0.0.1:8787/api/search?q=' > /dev/null
+          PKG_REGISTRY=http://127.0.0.1:8787 PKG_TOKEN=ci-admin-token npm run seed
+      - run: npm test
+        env:
+          PKG_REGISTRY: http://127.0.0.1:8787
+      - name: Inspect the package contents
+        run: npm pack --workspace cli --dry-run
+      - name: Publish public package with OIDC and provenance
+        run: npm publish --workspace cli --access public --provenance
+      - name: Verify the published package ownership marker
+        run: node scripts/check-distribution.mjs --published
+      - run: mcp-publisher login github-oidc
+      - run: mcp-publisher publish server.json
+      - run: node scripts/check-distribution.mjs --registry
